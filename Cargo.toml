@@ -27,6 +27,9 @@ interprocess = "2.4.4"
 widestring = "1.2.1"
 tray-icon = "0.26.1"
 winreg = "0.55.0"
+# ONNX Runtime has no GNU Windows prebuilt link libraries; load the official
+# Windows DLL at runtime through its stable C ABI instead.
+ort = { version = "2.0.0-rc.13", features = ["load-dynamic"] }
 
 # whisper-rs-sys 0.15.0 applies MSVC /utf-8 to MinGW as well. Patch only
 # the target-env detection until upstream releases a corrected build script.

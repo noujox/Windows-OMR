@@ -86,6 +86,7 @@ docker run --rm -v "$PWD:/work" -w /work/tools/windows-audio-check meeting-recor
 
 - El entorno requerido es **MSYS2 UCRT64**, con toolchain Rust `x86_64-pc-windows-gnu`; no utilizar Rust MSVC como host cuando se compila con el GCC de MSYS2.
 - Se agregó `vendor/whisper-rs-sys` 0.15.0 con un parche mínimo: aplicar `/utf-8` únicamente si `target_env = "msvc"`. La dependencia original falla al pasar esa bandera al GCC de MinGW.
+- Para Windows, `ort` utiliza la opción `load-dynamic`: ONNX Runtime se carga como DLL compatible en tiempo de ejecución. Debemos incluir la DLL en la distribución; Linux sigue con su configuración original.
 - La fuente original de la rama está compartida por SMB en `Z:\\miniCosas\\omarchy-meeting-recorder`; compilar sobre el disco local de TuxTeam y copiar luego artefactos a la carpeta SMB.
 
 ## Automatización de compilación (pendiente de validación CI)
