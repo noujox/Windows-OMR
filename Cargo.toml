@@ -27,3 +27,8 @@ interprocess = "2.4.4"
 widestring = "1.2.1"
 tray-icon = "0.26.1"
 winreg = "0.55.0"
+
+# whisper-rs-sys 0.15.0 applies MSVC /utf-8 to MinGW as well. Patch only
+# the target-env detection until upstream releases a corrected build script.
+[patch.crates-io]
+whisper-rs-sys = { path = "vendor/whisper-rs-sys" }

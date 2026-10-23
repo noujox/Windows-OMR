@@ -26,7 +26,7 @@ jobs:
             mingw-w64-ucrt-x86_64-ffmpeg
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.92.0
+          toolchain: 1.92.0-x86_64-pc-windows-gnu
           targets: x86_64-pc-windows-gnu
       - name: Compile full Windows application (CPU baseline)
         shell: msys2 {0}

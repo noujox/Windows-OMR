@@ -82,9 +82,15 @@ docker run --rm -v "$PWD:/work" -w /work/tools/windows-audio-check meeting-recor
 
 **Resultado:** comprobación cruzada WASAPI, Named Pipes y dependencias básicas de bandeja correcta; pruebas Linux 67/67. Estas validaciones todavía no prueban el ejecutable GTK en Windows. Faltan pruebas de hardware real, la compilación Windows de GTK4 y las demás dependencias Unix.
 
-## Compilación Windows (no ejecutada todavía)
+## Compilación Windows (en curso en TuxTeam)
 
-- `scripts/build-windows-msys2.sh`: primer script para compilar Windows GNU CPU con MSYS2 MINGW64.
+- El entorno requerido es **MSYS2 UCRT64**, con toolchain Rust `x86_64-pc-windows-gnu`; no utilizar Rust MSVC como host cuando se compila con el GCC de MSYS2.
+- Se agregó `vendor/whisper-rs-sys` 0.15.0 con un parche mínimo: aplicar `/utf-8` únicamente si `target_env = "msvc"`. La dependencia original falla al pasar esa bandera al GCC de MinGW.
+- La fuente original de la rama está compartida por SMB en `Z:\\miniCosas\\omarchy-meeting-recorder`; compilar sobre el disco local de TuxTeam y copiar luego artefactos a la carpeta SMB.
+
+## Automatización de compilación (pendiente de validación CI)
+
+- `scripts/build-windows-msys2.sh`: script para compilar Windows GNU CPU con MSYS2 UCRT64.
 - `.github/workflows/windows-ci.yml`: comprobación del ejecutable Windows con GTK4/libadwaita en un runner real; solo correrá si se publica la rama o abre un PR.
 - `src/windows_integration.rs`: integración HKCU Run y bandeja. Aún no probada en Windows.
 
