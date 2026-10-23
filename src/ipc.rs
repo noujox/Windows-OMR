@@ -1,4 +1,4 @@
-//! Live state for the bar widget.
+//! Local recorder state and command IPC.
 //!
 //! The app listens on a Unix socket in $XDG_RUNTIME_DIR and writes one JSON
 //! line per tick to every connected client: 20 times a second while recording,
@@ -16,18 +16,28 @@
 //! to be done and print its folder, for scripts and agents.
 
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
+#[cfg(not(target_os = "windows"))]
 use std::os::unix::net::{UnixListener, UnixStream};
+#[cfg(not(target_os = "windows"))]
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+#[cfg(not(target_os = "windows"))]
 use gtk::glib;
 
+#[cfg(not(target_os = "windows"))]
 use crate::APP_NAME;
 use crate::audio::{Source, to_meter};
 
 const MAX_LINE: usize = 4096;
+
+#[cfg(target_os = "windows")]
+#[path = "ipc_windows.rs"]
+mod windows;
+#[cfg(target_os = "windows")]
+pub use windows::{send, serve, wait, watch};
 
 #[derive(Clone, Default)]
 pub struct Status {
@@ -72,6 +82,7 @@ pub fn busiest(statuses: &Statuses) -> Status {
         })
 }
 
+#[cfg(not(target_os = "windows"))]
 fn socket_path() -> PathBuf {
     glib::user_runtime_dir().join(format!("{APP_NAME}.sock"))
 }
@@ -103,6 +114,7 @@ pub type Command = (&'static str, String);
 /// Starts the socket server. Called once, from the primary instance. Clients
 /// get the state lines of the busiest window; a line a client writes that
 /// names one of `COMMANDS` is passed on to `commands`.
+#[cfg(not(target_os = "windows"))]
 pub fn serve(
     statuses: Statuses,
     mic: Source,
@@ -180,6 +192,7 @@ pub fn serve(
     });
 }
 
+#[cfg(not(target_os = "windows"))]
 fn read_commands(stream: UnixStream, commands: &async_channel::Sender<Command>) {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
@@ -244,6 +257,7 @@ pub fn notes_line(path: &std::path::Path) -> Option<String> {
 }
 
 /// `omarchy-meeting-recorder stop`: ask the running app to stop recording.
+#[cfg(not(target_os = "windows"))]
 pub fn send(command: &str) -> bool {
     match UnixStream::connect(socket_path()) {
         Ok(mut stream) => stream.write_all(format!("{command}\n").as_bytes()).is_ok(),
@@ -256,6 +270,7 @@ pub fn send(command: &str) -> bool {
 /// back as soon as the audio is saved, before the transcript. Started before
 /// the recorder, it waits for it. False when the recorder closes before the
 /// meeting is done.
+#[cfg(not(target_os = "windows"))]
 pub fn wait(audio_only: bool) -> bool {
     let mut busy = false;
     loop {
@@ -303,6 +318,7 @@ fn round(value: f64) -> f64 {
 }
 
 /// `omarchy-meeting-recorder watch`: relay the app's state lines to stdout.
+#[cfg(not(target_os = "windows"))]
 pub fn watch() {
     let mut stdout = std::io::stdout();
     loop {
@@ -364,7 +380,10 @@ mod tests {
     #[test]
     fn notes_can_name_the_meeting() {
         let args = ["Voice-over\nstop".to_owned(), " prioriteit ".to_owned()];
-        assert_eq!(name_line(&args).as_deref(), Some("name Voice-over stop prioriteit"));
+        assert_eq!(
+            name_line(&args).as_deref(),
+            Some("name Voice-over stop prioriteit")
+        );
         assert_eq!(name_line(&[]), None);
         assert_eq!(
             parse_command("name Voice-over prioriteit\n"),
@@ -379,10 +398,7 @@ mod tests {
             Some(("notes", "/tmp/a script.md".into()))
         );
         let path = std::path::Path::new("/tmp/a script.md");
-        assert_eq!(
-            notes_line(path).as_deref(),
-            Some("notes /tmp/a script.md")
-        );
+        assert_eq!(notes_line(path).as_deref(), Some("notes /tmp/a script.md"));
         assert_eq!(notes_line(std::path::Path::new("/tmp/a\nstop")), None);
     }
 

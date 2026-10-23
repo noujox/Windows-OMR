@@ -10,6 +10,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::io::{Read, Write};
+#[cfg(not(target_os = "windows"))]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -21,6 +22,7 @@ use crate::APP_NAME;
 pub const FILE: &str = "webcam.mp4";
 
 /// The video devices, as (device, name), sorted by name.
+#[cfg(not(target_os = "windows"))]
 pub fn devices() -> Vec<(PathBuf, String)> {
     let Ok(entries) = std::fs::read_dir("/sys/class/video4linux") else {
         return Vec::new();
@@ -29,11 +31,72 @@ pub fn devices() -> Vec<(PathBuf, String)> {
         .flatten()
         .filter_map(|entry| {
             let name = std::fs::read_to_string(entry.path().join("name")).ok()?;
-            Some((PathBuf::from("/dev").join(entry.file_name()), name.trim().to_owned()))
+            Some((
+                PathBuf::from("/dev").join(entry.file_name()),
+                name.trim().to_owned(),
+            ))
         })
         .collect();
     found.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
     found
+}
+
+/// Windows: enumerate DirectShow video devices via bundled FFmpeg.
+/// The path encodes the FFmpeg device input ("video=..."), not a filesystem path.
+#[cfg(target_os = "windows")]
+pub fn devices() -> Vec<(PathBuf, String)> {
+    let output = Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-f",
+            "dshow",
+            "-list_devices",
+            "true",
+            "-i",
+            "dummy",
+        ])
+        .output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    parse_dshow_devices(&String::from_utf8_lossy(&output.stderr))
+}
+
+/// Only accept FFmpeg lines containing the annotated video device name.
+/// Do not parse "Alternative name" lines or audio devices.
+#[cfg(any(target_os = "windows", test))]
+fn parse_dshow_devices(log: &str) -> Vec<(PathBuf, String)> {
+    let mut devices = Vec::new();
+    for line in log.lines() {
+        let Some((before, _)) = line.split_once("\" (video)") else {
+            continue;
+        };
+        let Some(start) = before.rfind('"') else {
+            continue;
+        };
+        let name = before[start + 1..].trim();
+        if name.is_empty() {
+            continue;
+        }
+        if devices.iter().any(|(_, existing)| existing == name) {
+            continue;
+        }
+        devices.push((PathBuf::from(format!("video={name}")), name.to_owned()));
+    }
+    devices.sort_by(|a, b| a.1.cmp(&b.1));
+    devices
+}
+
+/// Configure an FFmpeg video input for the target platform.
+fn camera_input(command: &mut Command, device: &Path) {
+    #[cfg(target_os = "windows")]
+    {
+        command.args(["-f", "dshow", "-i"]).arg(device);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        command.args(["-f", "v4l2", "-i"]).arg(device);
+    }
 }
 
 /// The camera the webcam toggle records: the one named `saved` when it is
@@ -42,7 +105,11 @@ pub fn pick(devices: &[(PathBuf, String)], saved: &str) -> Option<(PathBuf, Stri
     devices
         .iter()
         .find(|(_, name)| !saved.is_empty() && name == saved)
-        .or_else(|| devices.iter().find(|(_, name)| !name.starts_with("Dummy video device")))
+        .or_else(|| {
+            devices
+                .iter()
+                .find(|(_, name)| !name.starts_with("Dummy video device"))
+        })
         .cloned()
 }
 
@@ -52,7 +119,16 @@ fn segment(staging: &Path, n: u32) -> PathBuf {
 
 /// The preview: a small picture, a dozen frames a second, as JPEGs on stdout.
 const PREVIEW: [&str; 10] = [
-    "-vf", "scale=192:-2,fps=12", "-c:v", "mjpeg", "-q:v", "7", "-f", "image2pipe", "pipe:1", "-y",
+    "-vf",
+    "scale=192:-2,fps=12",
+    "-c:v",
+    "mjpeg",
+    "-q:v",
+    "7",
+    "-f",
+    "image2pipe",
+    "pipe:1",
+    "-y",
 ];
 
 /// An ffmpeg that stops with the app, should the app go away mid-recording,
@@ -63,6 +139,7 @@ fn ffmpeg() -> Command {
         .args(["-hide_banner", "-loglevel", "error", "-nostats"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
+    #[cfg(not(target_os = "windows"))]
     unsafe {
         command.pre_exec(|| {
             libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
@@ -75,7 +152,11 @@ fn ffmpeg() -> Command {
 /// Takes the first whole JPEG off the front of `buffer`, dropping what came before it.
 pub(crate) fn take_jpeg(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
     let start = buffer.windows(2).position(|w| w == [0xFF, 0xD8])?;
-    let end = buffer[start + 2..].windows(2).position(|w| w == [0xFF, 0xD9])? + start + 4;
+    let end = buffer[start + 2..]
+        .windows(2)
+        .position(|w| w == [0xFF, 0xD9])?
+        + start
+        + 4;
     let frame = buffer[start..end].to_vec();
     buffer.drain(..end);
     Some(frame)
@@ -88,7 +169,9 @@ fn read_frames(
     frames: &async_channel::Sender<Vec<u8>>,
     first: Option<async_channel::Sender<()>>,
 ) {
-    let Some(mut stdout) = child.stdout.take() else { return };
+    let Some(mut stdout) = child.stdout.take() else {
+        return;
+    };
     let frames = frames.clone();
     std::thread::spawn(move || {
         let mut first = first;
@@ -170,7 +253,8 @@ impl Webcam {
             return;
         }
         let mut command = ffmpeg();
-        command.args(["-f", "v4l2", "-i"]).arg(device).args(PREVIEW).stdin(Stdio::null());
+        camera_input(&mut command, device);
+        command.args(PREVIEW).stdin(Stdio::null());
         match command.spawn() {
             Ok(mut child) => {
                 read_frames(&mut child, &self.frames, None);
@@ -190,7 +274,11 @@ impl Webcam {
 
     /// Where the audio is now: the recorded time, without the pauses.
     fn clock(&self) -> f64 {
-        self.recorded.get() + self.stretch_began.get().map_or(0.0, |began| began.elapsed().as_secs_f64())
+        self.recorded.get()
+            + self
+                .stretch_began
+                .get()
+                .map_or(0.0, |began| began.elapsed().as_secs_f64())
     }
 
     /// A recording begins in `staging`, with the camera when `device` is given.
@@ -207,7 +295,8 @@ impl Webcam {
     /// Starts a part when the camera is wanted and none runs; the same ffmpeg
     /// feeds the preview.
     fn start_part(&self) {
-        let (Some(device), Some(staging)) = (self.device.borrow().clone(), self.staging.borrow().clone())
+        let (Some(device), Some(staging)) =
+            (self.device.borrow().clone(), self.staging.borrow().clone())
         else {
             return;
         };
@@ -217,11 +306,13 @@ impl Webcam {
         self.stop_preview();
         let file = segment(&staging, self.parts.borrow().len() as u32);
         let mut command = ffmpeg();
+        command.args(["-thread_queue_size", "512"]);
+        camera_input(&mut command, &device);
         command
-            .args(["-thread_queue_size", "512", "-f", "v4l2", "-i"])
-            .arg(&device)
             .args(["-map", "0:v"])
-            .args(["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-y"])
+            .args([
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-y",
+            ])
             .arg(&file)
             .args(["-map", "0:v"])
             .args(PREVIEW)
@@ -232,7 +323,11 @@ impl Webcam {
                 read_frames(&mut child, &self.frames, Some(first));
                 *self.first_frame.borrow_mut() = Some(heard);
                 *self.running.borrow_mut() = Some(child);
-                self.parts.borrow_mut().push(Part { file, start: None, end: None });
+                self.parts.borrow_mut().push(Part {
+                    file,
+                    start: None,
+                    end: None,
+                });
             }
             Err(err) => eprintln!("{APP_NAME}: could not start the webcam: {err}"),
         }
@@ -351,7 +446,9 @@ const SLACK: f64 = 0.1;
 
 /// Whether the parts cover the whole audio without gaps.
 fn joined_up(parts: &[(PathBuf, f64, f64)], total: f64) -> bool {
-    let Some(first) = parts.first() else { return false };
+    let Some(first) = parts.first() else {
+        return false;
+    };
     let last = &parts[parts.len() - 1];
     first.1 <= SLACK
         && parts.windows(2).all(|pair| pair[1].1 - pair[0].2 <= SLACK)
@@ -378,7 +475,9 @@ fn padded_filter(parts: &[(PathBuf, f64, f64)], total: f64) -> String {
     let mut at = 0.0;
     fn black(length: f64, steps: &mut Vec<String>, pieces: &mut Vec<String>) {
         let label = format!("b{}", pieces.len());
-        steps.push(format!("color=c=black:s={SIZE}:r=30:d={length:.3}[{label}]"));
+        steps.push(format!(
+            "color=c=black:s={SIZE}:r=30:d={length:.3}[{label}]"
+        ));
         pieces.push(label);
     }
     for (n, (_, start, end)) in parts.iter().enumerate() {
@@ -421,7 +520,9 @@ pub fn export(staging: &Path, out: &Path, plan: Plan) -> bool {
         return false;
     }
     let mut command = Command::new("ffmpeg");
-    command.args(["-hide_banner", "-loglevel", "error", "-y"]).stdin(Stdio::null());
+    command
+        .args(["-hide_banner", "-loglevel", "error", "-y"])
+        .stdin(Stdio::null());
     if joined_up(&parts, plan.total) {
         let list = staging.join("webcam.txt");
         if std::fs::write(&list, concat_list(&parts)).is_err() {
@@ -436,7 +537,12 @@ pub fn export(staging: &Path, out: &Path, plan: Plan) -> bool {
             command.arg("-i").arg(path);
         }
         command
-            .args(["-filter_complex", &padded_filter(&parts, plan.total), "-map", "[v]"])
+            .args([
+                "-filter_complex",
+                &padded_filter(&parts, plan.total),
+                "-map",
+                "[v]",
+            ])
             .args(["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]);
     }
     command
@@ -453,20 +559,47 @@ mod tests {
     #[test]
     fn the_toggle_records_a_real_camera() {
         let devices = vec![
-            (PathBuf::from("/dev/video0"), "Dummy video device (0x0000)".to_owned()),
+            (
+                PathBuf::from("/dev/video0"),
+                "Dummy video device (0x0000)".to_owned(),
+            ),
             (PathBuf::from("/dev/video9"), "Opal C1".to_owned()),
             (PathBuf::from("/dev/video2"), "Laptop camera".to_owned()),
         ];
         assert_eq!(pick(&devices, "").map(|d| d.1), Some("Opal C1".to_owned()));
-        assert_eq!(pick(&devices, "Laptop camera").map(|d| d.1), Some("Laptop camera".to_owned()));
-        assert_eq!(pick(&devices, "Gone").map(|d| d.1), Some("Opal C1".to_owned()));
+        assert_eq!(
+            pick(&devices, "Laptop camera").map(|d| d.1),
+            Some("Laptop camera".to_owned())
+        );
+        assert_eq!(
+            pick(&devices, "Gone").map(|d| d.1),
+            Some("Opal C1".to_owned())
+        );
         assert_eq!(pick(&devices[..1], ""), None);
+    }
+
+    #[test]
+    fn directshow_lists_only_video_cameras() {
+        let log = "[dshow @ 0000] DirectShow video devices\n[dshow @ 0000] \"Integrated Camera\" (video)\n[dshow @ 0000]   Alternative name \"@device_pnp_abc\"\n[dshow @ 0000] \"Microphone Array\" (audio)\n[dshow @ 0000] \"USB Camera\" (video)";
+        assert_eq!(
+            parse_dshow_devices(log),
+            vec![
+                (
+                    PathBuf::from("video=Integrated Camera"),
+                    "Integrated Camera".into()
+                ),
+                (PathBuf::from("video=USB Camera"), "USB Camera".into()),
+            ]
+        );
     }
 
     #[test]
     fn frames_are_cut_out_of_the_stream() {
         let mut stream = vec![0x00, 0xFF, 0xD8, 1, 2, 0xFF, 0xD9, 0xFF, 0xD8, 3];
-        assert_eq!(take_jpeg(&mut stream), Some(vec![0xFF, 0xD8, 1, 2, 0xFF, 0xD9]));
+        assert_eq!(
+            take_jpeg(&mut stream),
+            Some(vec![0xFF, 0xD8, 1, 2, 0xFF, 0xD9])
+        );
         // The next frame is not whole yet: it waits for more of the stream.
         assert_eq!(take_jpeg(&mut stream), None);
         assert_eq!(stream, vec![0xFF, 0xD8, 3]);
@@ -492,8 +625,13 @@ mod tests {
         let parts = [part(0, 2.0, 5.0)];
         assert!(!joined_up(&parts, 8.0));
         let filter = padded_filter(&parts, 8.0);
-        assert!(filter.starts_with("color=c=black:s=1920x1080:r=30:d=2.000[b0];[0:v]trim=duration=3.000"));
-        assert!(filter.ends_with("color=c=black:s=1920x1080:r=30:d=3.000[b2];[b0][p0][b2]concat=n=3:v=1:a=0[v]"));
+        assert!(
+            filter
+                .starts_with("color=c=black:s=1920x1080:r=30:d=2.000[b0];[0:v]trim=duration=3.000")
+        );
+        assert!(filter.ends_with(
+            "color=c=black:s=1920x1080:r=30:d=3.000[b2];[b0][p0][b2]concat=n=3:v=1:a=0[v]"
+        ));
     }
 
     #[test]

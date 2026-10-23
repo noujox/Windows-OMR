@@ -32,13 +32,13 @@
 
 - [x] WASAPI nativo: captura de micrófono predeterminado y loopback de salida, con reconexión ante cambio de dispositivo.
 - [x] Reproducción WASAPI nativa en Windows; en Linux se conserva `pacat`.
-- [ ] Sustituir el socket Unix de IPC por transporte Windows seguro (preferiblemente Named Pipes con ACL de usuario).
-- [ ] Adaptar manejo Unix de procesos en player, webcam y agent, conservando límites de seguridad.
-- [ ] Captura webcam mediante dispositivos Windows (Media Foundation o FFmpeg dshow), incluida vista previa.
+- [x] IPC Windows implementado con Named Pipes y DACL restringida (SYSTEM y propietario), manteniendo `start`, `stop`, `pause`, `watch` y `wait`; comprobado mediante compilación cruzada, pendiente prueba de integración.
+- [ ] Terminar manejo nativo de procesos: FFmpeg y webcam tienen compatibilidad básica, pero faltan Windows Job Objects para finalizar subprocesos tras caídas. Agente IA se deshabilita de forma segura en Windows hasta disponer de un runner aislado.
+- [x] Adaptación inicial de webcam Windows a FFmpeg DirectShow, con enumeración y previsualización/segmentos; pendiente prueba física y validación de nombres especiales de cámaras.
 - [ ] Validar política de aceleración GPU/CPU con dispositivos reales Windows y empaquetar los runtimes GPU pertinentes.
 - [ ] Implementar bandeja, minimizar y restaurar; mantener grabación al ocultarse.
 - [ ] Implementar autostart del usuario, con ventana oculta y sin grabar.
-- [ ] Reemplazar `sh -c` en actions por backend Windows apropiado.
+- [x] Ejecutar acciones configuradas en Windows mediante PowerShell no interactivo, conservando variables de entorno `MEETING_*`.
 - [ ] Nuevo paquete Windows con GTK4/libadwaita, FFmpeg y runtime Whisper; pruebas reales x64.
 - [ ] Construcción, test de integración audio con Meet/Zoom/Teams; distribución e instalador.
 - [ ] Desacoplar el ID/nombre upstream solo después de decidir nombre comercial y estrategia de migración.
@@ -50,14 +50,14 @@
 | `src/ui.rs` | Conservado; sin oferta de plugin |
 | `src/theme.rs` | Paleta libadwaita independiente |
 | `src/settings.rs` | Preferencias persistentes definidas |
-| `src/agent.rs` | Agente configurable; sandbox/ejecución Unix aún pendiente Windows |
+| `src/agent.rs`, `src/agent_windows.rs` | Agente con aislamiento Linux; Windows deshabilitado provisionalmente hasta runner seguro |
 | `src/audio.rs`, `src/audio_windows.rs` | Captura PCM PulseAudio Linux / WASAPI Windows |
 | `src/player.rs`, `src/player_windows.rs` | FFmpeg + `pacat` Linux / render WASAPI Windows |
-| `src/ipc.rs` | Socket Unix; reemplazo pendiente |
-| `src/webcam.rs` | V4L2 Linux; reemplazo pendiente |
+| `src/ipc.rs`, `src/ipc_windows.rs` | Unix socket Linux / Named Pipes Windows con DACL restringida |
+| `src/webcam.rs` | V4L2 Linux / FFmpeg DirectShow Windows, pendiente validar cámara real |
 | `src/transcribe.rs` | Whisper mantenido; aceleración auto con reintento CPU implementada, pendiente validación de hardware |
 | `src/models.rs` | Almacenamiento Windows preparado |
-| `src/actions.rs` | Shell Unix todavía requiere backend Windows |
+| `src/actions.rs` | `sh` Linux / PowerShell no interactivo Windows |
 
 ## Validación de regresión Linux (no valida Windows)
 
@@ -67,7 +67,7 @@ docker run --rm --cpus=3 --memory=8g -v "$PWD:/work" -w /work meeting-recorder-l
 docker run --rm --cpus=3 --memory=8g -v "$PWD:/work" -w /work meeting-recorder-linux-check cargo test --locked --no-default-features
 ```
 
-Estos comandos construyen y validan únicamente el backend Linux, sin instalar Rust/GTK en el servidor anfitrión. El chequeo `cargo check --locked --no-default-features` pasó correctamente con Rust 1.92.0, y `cargo test --locked --no-default-features` pasó **66 pruebas de 66**. Quedaron advertencias `dead_code` por ajustes Windows todavía no conectados a la interfaz.
+Estos comandos construyen y validan únicamente el backend Linux, sin instalar Rust/GTK en el servidor anfitrión. El chequeo `cargo check --locked --no-default-features` pasó correctamente con Rust 1.92.0, y `cargo test --locked --no-default-features` pasó **67 pruebas de 67**. Quedaron advertencias `dead_code` por ajustes Windows todavía no conectados a la interfaz.
 
 ## Validación de código WASAPI Windows
 

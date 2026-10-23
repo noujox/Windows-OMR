@@ -3,6 +3,10 @@
 //! levels to the application and optional automation clients.
 
 mod actions;
+#[cfg(not(target_os = "windows"))]
+mod agent;
+#[cfg(target_os = "windows")]
+#[path = "agent_windows.rs"]
 mod agent;
 mod animation;
 mod audio;
@@ -14,9 +18,9 @@ mod ipc;
 mod meeting;
 mod models;
 mod nemotron;
+mod notes;
 mod player;
 mod settings;
-mod notes;
 mod theme;
 mod transcribe;
 mod ui;
@@ -74,7 +78,10 @@ fn open_with(args: &[String], start: bool) -> glib::ExitCode {
     };
     let mut lines = Vec::new();
     if let Some(file) = flags.notes {
-        match std::fs::canonicalize(file).ok().and_then(|path| ipc::notes_line(&path)) {
+        match std::fs::canonicalize(file)
+            .ok()
+            .and_then(|path| ipc::notes_line(&path))
+        {
             Some(line) => lines.push(line),
             None => {
                 eprintln!("{APP_NAME}: --notes needs a text file that exists");
@@ -172,12 +179,16 @@ fn main() -> glib::ExitCode {
             );
             println!();
             println!("  (no command)  open the recorder, ready to record");
-            println!("  --name <name>   name the meeting about to be recorded, whoever presses Start");
+            println!(
+                "  --name <name>   name the meeting about to be recorded, whoever presses Start"
+            );
             println!(
                 "  --notes <file>  show the file as meeting notes next to the recorder, to read from and edit while recording"
             );
             println!("  <meeting>     open a .meeting-recorder file or a meeting folder");
-            println!("  start         start recording, opening the recorder if needed; takes --name and --notes too");
+            println!(
+                "  start         start recording, opening the recorder if needed; takes --name and --notes too"
+            );
             println!("  stop          stop the running recording (for a keybinding)");
             println!("  compact       switch the recording window between full and compact");
             println!("  pause         pause or resume the running recording");
@@ -213,7 +224,7 @@ fn main() -> glib::ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{flags, Flags};
+    use super::{Flags, flags};
 
     fn args(words: &[&str]) -> Vec<String> {
         words.iter().map(|w| w.to_string()).collect()
@@ -222,18 +233,31 @@ mod tests {
     #[test]
     fn flags_take_a_value_after_them_or_after_an_equals_sign() {
         assert_eq!(
-            flags(&args(&["--notes", "script.md", "--name=Voice-over prioriteit"])),
-            Ok(Flags { name: args(&["Voice-over prioriteit"]), notes: Some("script.md".into()) })
+            flags(&args(&[
+                "--notes",
+                "script.md",
+                "--name=Voice-over prioriteit"
+            ])),
+            Ok(Flags {
+                name: args(&["Voice-over prioriteit"]),
+                notes: Some("script.md".into())
+            })
         );
         assert_eq!(
             flags(&args(&["--name", "Voice-over", "--notes=script.md"])),
-            Ok(Flags { name: args(&["Voice-over"]), notes: Some("script.md".into()) })
+            Ok(Flags {
+                name: args(&["Voice-over"]),
+                notes: Some("script.md".into())
+            })
         );
     }
 
     #[test]
     fn words_outside_a_flag_are_the_name_as_before() {
-        assert_eq!(flags(&args(&["Weekly", "sync"])).unwrap().name, args(&["Weekly", "sync"]));
+        assert_eq!(
+            flags(&args(&["Weekly", "sync"])).unwrap().name,
+            args(&["Weekly", "sync"])
+        );
         assert_eq!(flags(&[]), Ok(Flags::default()));
     }
 

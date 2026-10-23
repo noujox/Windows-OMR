@@ -5,6 +5,9 @@ mod audio;
 #[cfg(target_os = "windows")]
 #[path = "../../../src/player_windows.rs"]
 mod player_windows;
+#[cfg(target_os = "windows")]
+#[path = "../../../src/ipc.rs"]
+mod ipc;
 mod settings {
     pub fn microphone_device() -> String {
         "default".into()

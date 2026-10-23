@@ -135,11 +135,25 @@ pub fn run(action: &Action, dir: &Path, manifest: &Manifest) -> Result<Outcome, 
         .iter()
         .map(|f| dir.join(f))
         .find(|p| p.exists());
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(&action.command)
-        .arg("meeting-action")
-        .arg(dir)
+    // Commands are explicitly configured by the user, never taken from the
+    // transcript. Windows PowerShell is included with supported Windows builds;
+    // actions should use MEETING_DIR rather than the Unix-only "$1" argument.
+    #[cfg(target_os = "windows")]
+    let mut action_process = {
+        let mut command = Command::new("powershell.exe");
+        command.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]);
+        command
+    };
+    #[cfg(not(target_os = "windows"))]
+    let mut action_process = {
+        let mut command = Command::new("sh");
+        command.args(["-c"]);
+        command
+    };
+    action_process.arg(&action.command);
+    #[cfg(not(target_os = "windows"))]
+    action_process.args(["meeting-action"]).arg(dir);
+    let output = action_process
         .current_dir(dir)
         .env("MEETING_DIR", dir)
         .env("MEETING_TRANSCRIPT", dir.join("transcript.md"))

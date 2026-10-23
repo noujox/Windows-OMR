@@ -23,3 +23,5 @@ vulkan = ["whisper-rs/vulkan"]
 # Windows-native WASAPI capture, omitted on Linux.
 [target.'cfg(target_os = "windows")'.dependencies]
 wasapi = "0.26.0"
+interprocess = "2.4.4"
+widestring = "1.2.1"
