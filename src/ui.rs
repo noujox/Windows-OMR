@@ -3630,7 +3630,12 @@ impl Recorder {
             let weak = Rc::downgrade(self);
             row.connect_apply(move |_| {
                 if let Some(r) = weak.upgrade() {
-                    r.apply_speakers();
+                    // AdwEntryRow emits "apply" while its embedded GtkEntry
+                    // still processes Enter. apply_speakers() rebuilds and
+                    // removes these rows; doing so in the signal handler can
+                    // destroy the active GObject and crash GTK on Windows.
+                    // Schedule the rebuild only after the signal has returned.
+                    glib::idle_add_local_once(move || r.apply_speakers());
                 }
             });
             let focus = gtk::EventControllerFocus::new();
