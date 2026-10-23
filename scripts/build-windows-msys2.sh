@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Run in MSYS2 MINGW64 on Windows; Rust target x86_64-pc-windows-gnu.
-# Native GTK4/libadwaita, FFmpeg, CMake and MinGW are supplied by MSYS2.
+# Run in MSYS2 UCRT64 on Windows (GTK4/libadwaita packages are UCRT64).
 cd "$(dirname "$0")/.."
-export PATH="/mingw64/bin:${PATH}"
-export PKG_CONFIG_PATH="/mingw64/lib/pkgconfig"
+export PATH="/ucrt64/bin:$(cygpath -u "$USERPROFILE")/.cargo/bin:${PATH}"
+export PKG_CONFIG_PATH="/ucrt64/lib/pkgconfig:/ucrt64/share/pkgconfig"
+export PKG_CONFIG_ALLOW_CROSS=1
 export CMAKE_GENERATOR=Ninja
+export LIBCLANG_PATH="/ucrt64/bin"
 rustup target add x86_64-pc-windows-gnu
-cargo build --release --target x86_64-pc-windows-gnu --no-default-features
+cargo build --locked --release --target x86_64-pc-windows-gnu --no-default-features
 echo "Binary: target/x86_64-pc-windows-gnu/release/omarchy-meeting-recorder.exe"
-echo "This binary is NOT standalone; GTK, FFmpeg, and ONNX runtime packaging still require validation."
+echo "The binary needs GTK, FFmpeg and AI runtime DLLs before distribution."

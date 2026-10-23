@@ -2,8 +2,7 @@ name: Windows compiler check
 
 on:
   push:
-    branches:
-      - port/windows-native
+    branches: [port/windows-native]
   pull_request:
 
 jobs:
@@ -13,17 +12,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: UCRT64
+          path-type: inherit
           update: true
           install: >-
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-clang
-            mingw-w64-x86_64-gtk4
-            mingw-w64-x86_64-libadwaita
-            mingw-w64-x86_64-ffmpeg
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-clang
+            mingw-w64-ucrt-x86_64-gtk4
+            mingw-w64-ucrt-x86_64-libadwaita
+            mingw-w64-ucrt-x86_64-ffmpeg
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.92.0
@@ -31,6 +31,8 @@ jobs:
       - name: Compile full Windows application (CPU baseline)
         shell: msys2 {0}
         env:
-          PKG_CONFIG_PATH: /mingw64/lib/pkgconfig
+          PKG_CONFIG_PATH: /ucrt64/lib/pkgconfig
+          PKG_CONFIG_ALLOW_CROSS: "1"
           CMAKE_GENERATOR: Ninja
+          LIBCLANG_PATH: /ucrt64/bin
         run: cargo check --locked --target x86_64-pc-windows-gnu --no-default-features
