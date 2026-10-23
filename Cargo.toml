@@ -19,3 +19,7 @@ default = ["vulkan"]
 # GPU transcription through whisper.cpp's Vulkan backend. Needs the Vulkan
 # headers (`vulkan-headers` on Arch) and glslc (`shaderc`) to build.
 vulkan = ["whisper-rs/vulkan"]
+
+# Windows-native WASAPI capture, omitted on Linux.
+[target.'cfg(target_os = "windows")'.dependencies]
+wasapi = "0.26.0"

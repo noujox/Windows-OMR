@@ -24,12 +24,14 @@
 - [x] Añadir preferencias persistentes de dispositivos, Whisper, aceleración, tray y autostart (valores por defecto).
 - [x] Directorios de preferencias/configuración y modelos preparados para usar rutas de usuario GLib en Windows.
 - [x] Selección de aceleración Whisper auto/CPU/GPU; en auto, reintento CPU si falla inicialización GPU (sin pruebas de GPU Windows todavía).
-- [x] Captura abstraída por roles lógicos (micrófono y audio del computador), conservando por ahora el backend Linux.
+- [x] Captura por roles lógicos con backend WASAPI Windows y PulseAudio Linux.
+- [x] Silencios finales sincronizados incluso cuando loopback no entrega ningún paquete.
+- [x] Captura y reproducción cross-compiladas con Rust para `x86_64-pc-windows-gnu` (sin probar aún en hardware).
 
 ## Pendiente antes de compilar/ejecutar en Windows
 
-- [ ] Backends nativos de captura WASAPI para micrófono y loopback; preservar la sincronización y silencio compensatorio.
-- [ ] Sustituir el reproductor `pacat` por WASAPI o un reproductor multiplataforma.
+- [x] WASAPI nativo: captura de micrófono predeterminado y loopback de salida, con reconexión ante cambio de dispositivo.
+- [x] Reproducción WASAPI nativa en Windows; en Linux se conserva `pacat`.
 - [ ] Sustituir el socket Unix de IPC por transporte Windows seguro (preferiblemente Named Pipes con ACL de usuario).
 - [ ] Adaptar manejo Unix de procesos en player, webcam y agent, conservando límites de seguridad.
 - [ ] Captura webcam mediante dispositivos Windows (Media Foundation o FFmpeg dshow), incluida vista previa.
@@ -49,8 +51,8 @@
 | `src/theme.rs` | Paleta libadwaita independiente |
 | `src/settings.rs` | Preferencias persistentes definidas |
 | `src/agent.rs` | Agente configurable; sandbox/ejecución Unix aún pendiente Windows |
-| `src/audio.rs` | `parec` Linux, reemplazo pendiente |
-| `src/player.rs` | `pacat` Linux, reemplazo pendiente |
+| `src/audio.rs`, `src/audio_windows.rs` | Captura PCM PulseAudio Linux / WASAPI Windows |
+| `src/player.rs`, `src/player_windows.rs` | FFmpeg + `pacat` Linux / render WASAPI Windows |
 | `src/ipc.rs` | Socket Unix; reemplazo pendiente |
 | `src/webcam.rs` | V4L2 Linux; reemplazo pendiente |
 | `src/transcribe.rs` | Whisper mantenido; aceleración auto con reintento CPU implementada, pendiente validación de hardware |
@@ -65,7 +67,17 @@ docker run --rm --cpus=3 --memory=8g -v "$PWD:/work" -w /work meeting-recorder-l
 docker run --rm --cpus=3 --memory=8g -v "$PWD:/work" -w /work meeting-recorder-linux-check cargo test --locked --no-default-features
 ```
 
-Estos comandos construyen y validan únicamente el backend Linux, sin instalar Rust/GTK en el servidor anfitrión. El chequeo `cargo check --locked --no-default-features` pasó correctamente con Rust 1.92.0, y `cargo test --locked --no-default-features` pasó **64 pruebas de 64**. Quedaron advertencias `dead_code` por ajustes Windows todavía no conectados a la interfaz.
+Estos comandos construyen y validan únicamente el backend Linux, sin instalar Rust/GTK en el servidor anfitrión. El chequeo `cargo check --locked --no-default-features` pasó correctamente con Rust 1.92.0, y `cargo test --locked --no-default-features` pasó **66 pruebas de 66**. Quedaron advertencias `dead_code` por ajustes Windows todavía no conectados a la interfaz.
+
+## Validación de código WASAPI Windows
+
+El proyecto auxiliar compila los archivos reales `audio.rs`, `audio_windows.rs` y `player_windows.rs` usando Rust para Windows sin requerir GTK4 en el contenedor Linux:
+
+```sh
+docker run --rm -v "$PWD:/work" -w /work/tools/windows-audio-check meeting-recorder-linux-check sh -c 'rustup target add x86_64-pc-windows-gnu && cargo check --locked --target x86_64-pc-windows-gnu'
+```
+
+**Resultado:** comprobación cruzada de tipos WASAPI correcta y 66/66 pruebas Linux. Faltan pruebas de hardware real, la compilación Windows de GTK4 y las demás dependencias Unix.
 
 ## Notas de diseño
 

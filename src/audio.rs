@@ -1,14 +1,21 @@
-//! Audio capture through `parec`: one process per source, kept running for the
-//! whole life of the app so the meters work before and after a recording too.
+//! Two synchronized capture inputs with shared recording and meter timeline.
+//! Linux uses PulseAudio; Windows uses WASAPI including system loopback.
 
 use std::collections::VecDeque;
 use std::fs::File;
-use std::io::{BufWriter, Read, Write};
+#[cfg(not(target_os = "windows"))]
+use std::io::Read;
+use std::io::{BufWriter, Write};
 use std::path::Path;
+#[cfg(not(target_os = "windows"))]
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+
+#[cfg(target_os = "windows")]
+#[path = "audio_windows.rs"]
+mod windows;
 
 pub const RATE: u32 = 48_000;
 pub const CHANNELS: u32 = 2;
@@ -23,6 +30,7 @@ pub enum Input {
 impl Input {
     /// Linux backend: the system default source and default output monitor.
     /// The Windows backend will resolve these roles through WASAPI.
+    #[cfg(not(target_os = "windows"))]
     fn pulse_source(self) -> &'static str {
         match self {
             Self::Microphone => "@DEFAULT_SOURCE@",
@@ -67,9 +75,20 @@ impl Source {
         }));
         let shared = inner.clone();
         thread::spawn(move || {
+            #[cfg(target_os = "windows")]
+            if let Err(error) = windows::initialize_thread() {
+                eprintln!("Meeting Recorder: WASAPI {:?}: {error}", input);
+                return;
+            }
             loop {
+                #[cfg(target_os = "windows")]
+                if let Err(error) = windows::capture(input, &shared) {
+                    eprintln!("Meeting Recorder: WASAPI {:?}: {error}", input);
+                }
+                #[cfg(not(target_os = "windows"))]
                 capture(input.pulse_source(), &shared);
-                // parec exits when the device goes away; try again.
+
+                // Audio endpoints may disappear (unplugged headset/default change).
                 thread::sleep(Duration::from_secs(1));
             }
         });
@@ -98,6 +117,11 @@ impl Source {
 
     pub fn stop_recording(&self) {
         if let Some(mut recording) = self.inner.lock().unwrap().recording.take() {
+            // WASAPI loopback may produce no packets at all when output is silent.
+            // Always finish the track at its wall-clock duration so exports
+            // preserve alignment, including a fully silent computer track.
+            let missing = recording.timeline.remaining_to(Instant::now());
+            let _ = write_silence(&mut recording.file, missing);
             let _ = recording.file.flush();
         }
     }
@@ -119,6 +143,7 @@ impl Source {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn capture(device: &str, shared: &Mutex<Inner>) {
     let Ok(mut child) = Command::new("parec")
         .args([
@@ -137,48 +162,58 @@ fn capture(device: &str, shared: &Mutex<Inner>) {
         return;
     };
     let mut stdout = child.stdout.take().expect("piped stdout");
-    let mut buf = vec![0u8; CHUNK_BYTES];
-    // So a crash loses at most a second: flush every second, and push it to
-    // the disk itself every half minute in case the machine goes down too.
-    let mut chunks: u64 = 0;
+    let mut chunk = [0u8; CHUNK_BYTES];
+    let mut chunks = 0;
     loop {
         let asked = Instant::now();
-        if stdout.read_exact(&mut buf).is_err() {
+        if stdout.read_exact(&mut chunk).is_err() {
             break;
         }
         chunks += 1;
-        let now = Instant::now();
-        let peak = buf
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|b| i16::from_le_bytes([b[0], b[1]]).unsigned_abs())
-            .max()
-            .unwrap_or(0) as f32
-            / 32768.0;
-        let mut guard = shared.lock().unwrap();
-        let inner = &mut *guard;
-        inner.levels.pop_front();
-        inner.levels.push_back(peak);
-        if let Some(Recording { file, timeline }) = inner.recording.as_mut() {
-            timeline.heard(now.saturating_duration_since(asked), chunks == 1);
-            if inner.paused {
-                continue;
-            }
-            let missing = timeline.missing_before(now);
-            let _ = write_silence(file, missing);
-            timeline.wrote(missing + (CHUNK_BYTES / FRAME_BYTES) as u64);
-            let _ = file.write_all(&buf);
-            if chunks.is_multiple_of(50) {
-                let _ = file.flush();
-            }
-            if chunks.is_multiple_of(1500) {
-                let _ = file.get_ref().sync_data();
-            }
-        }
+        ingest_chunk(shared, &chunk, asked.elapsed(), chunks == 1, chunks);
     }
     let _ = child.kill();
     let _ = child.wait();
+}
+
+/// Processes PCM 48 kHz stereo s16le chunks from either backend.
+/// Keeps metering and silence compensation identical across platforms.
+fn ingest_chunk(
+    shared: &Mutex<Inner>,
+    chunk: &[u8; CHUNK_BYTES],
+    waited: Duration,
+    first: bool,
+    count: u64,
+) {
+    let now = Instant::now();
+    let peak = chunk
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|b| i16::from_le_bytes([b[0], b[1]]).unsigned_abs())
+        .max()
+        .unwrap_or(0) as f32
+        / 32768.0;
+    let mut guard = shared.lock().unwrap();
+    let inner = &mut *guard;
+    inner.levels.pop_front();
+    inner.levels.push_back(peak);
+    if let Some(Recording { file, timeline }) = inner.recording.as_mut() {
+        timeline.heard(waited, first);
+        if inner.paused {
+            return;
+        }
+        let missing = timeline.missing_before(now);
+        let _ = write_silence(file, missing);
+        timeline.wrote(missing + (CHUNK_BYTES / FRAME_BYTES) as u64);
+        let _ = file.write_all(chunk);
+        if count.is_multiple_of(50) {
+            let _ = file.flush();
+        }
+        if count.is_multiple_of(1500) {
+            let _ = file.get_ref().sync_data();
+        }
+    }
 }
 
 /// Where a recording is: how much audio it should hold by now, against how
@@ -237,6 +272,13 @@ impl Timeline {
         self.frames += frames;
         self.quiet = false;
     }
+
+    /// Fill trailing silence through Stop, or through the last Pause boundary.
+    fn remaining_to(&self, at: Instant) -> u64 {
+        let end = self.paused_at.unwrap_or(at);
+        let due = frames_in(end.saturating_duration_since(self.origin));
+        due.saturating_sub(self.frames)
+    }
 }
 
 fn frames_in(duration: Duration) -> u64 {
@@ -269,6 +311,7 @@ mod tests {
 
     const CHUNK_FRAMES: u64 = (CHUNK_BYTES / FRAME_BYTES) as u64;
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn captures_system_default_input_and_output() {
         assert_eq!(Input::Microphone.pulse_source(), "@DEFAULT_SOURCE@");
@@ -361,6 +404,26 @@ mod tests {
             write(&mut timeline, t + ms(3_020), ms(8_000), false),
             frames_in(ms(3_000))
         );
+    }
+
+    #[test]
+    fn silent_output_is_filled_until_stop() {
+        let started = Instant::now();
+        let empty = Timeline::new(started);
+        assert_eq!(empty.remaining_to(started + ms(2000)), frames_in(ms(2000)));
+        let mut heard = Timeline::new(started);
+        heard.wrote(frames_in(ms(700)));
+        assert_eq!(heard.remaining_to(started + ms(2000)), frames_in(ms(1300)));
+    }
+
+    #[test]
+    fn silent_output_does_not_grow_while_paused() {
+        let started = Instant::now();
+        let mut silent = Timeline::new(started);
+        silent.set_paused(true, started + ms(1000));
+        assert_eq!(silent.remaining_to(started + ms(5000)), frames_in(ms(1000)));
+        silent.set_paused(false, started + ms(5000));
+        assert_eq!(silent.remaining_to(started + ms(6000)), frames_in(ms(2000)));
     }
 
     #[test]

@@ -1,9 +1,8 @@
 //! The player on the done page: a two-lane waveform of the meeting (you above
 //! the line, the other side below it) with a playhead, click or drag to seek.
 //!
-//! Playback is `ffmpeg` decoding into `pacat`, not GStreamer: a stock Omarchy
-//! has no GStreamer audio sink, while `pacat` comes with the same package as
-//! the `parec` the recorder already records with. Pausing stops the pipeline
+//! FFmpeg decodes audio into PulseAudio on Linux or WASAPI on Windows.
+//! Pausing stops the pipeline
 //! and playing starts it again at the position; a meeting saved as separate
 //! files is mixed on the fly. A meeting with a `webcam.mp4` shows it small
 //! (`video_widget`, which the page lays over the transcript): a second ffmpeg decodes its frames ahead, each
@@ -11,6 +10,7 @@
 //! shown; a still of the position stands in while paused.
 
 use std::cell::{Cell, RefCell};
+#[cfg(not(target_os = "windows"))]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -21,6 +21,10 @@ use gtk::prelude::*;
 use gtk::{gio, glib};
 
 use crate::export;
+
+#[cfg(target_os = "windows")]
+#[path = "player_windows.rs"]
+mod windows;
 
 const BINS: usize = 1000;
 const MIC_COLOR: (f64, f64, f64) = (0.21, 0.52, 0.89);
@@ -35,7 +39,10 @@ type VideoFrames = async_channel::Receiver<(i64, Vec<u8>)>;
 /// webcam's frames alongside when there is a video.
 struct Playback {
     ffmpeg: Child,
+    #[cfg(not(target_os = "windows"))]
     pacat: Child,
+    #[cfg(target_os = "windows")]
+    sink: windows::Sink,
     video: Option<(Child, VideoFrames)>,
     /// A frame read ahead whose time has not come yet.
     next_frame: Option<(i64, Vec<u8>)>,
@@ -63,37 +70,51 @@ impl Playback {
             .stderr(Stdio::null());
         let mut ffmpeg = die_with_parent(&mut ffmpeg).spawn().ok()?;
         let audio = ffmpeg.stdout.take()?;
+        #[cfg(not(target_os = "windows"))]
         let pacat = die_with_parent(
             Command::new("pacat")
                 .args([
-                    "--playback",
-                    "--raw",
-                    "--format=s16le",
-                    "--rate=48000",
-                    "--channels=2",
-                    "--latency-msec=80",
+                    "--playback", "--raw", "--format=s16le", "--rate=48000",
+                    "--channels=2", "--latency-msec=80",
                     "--client-name=Meeting Recorder",
                 ])
                 .stdin(Stdio::from(audio))
                 .stdout(Stdio::null())
                 .stderr(Stdio::null()),
-        )
-        .spawn();
-        match pacat {
-            Ok(pacat) => Some(Playback {
-                ffmpeg,
-                pacat,
-                video: video.and_then(|path| play_video(path, from_us)),
-                next_frame: None,
-                started: Instant::now(),
-                from_us,
-            }),
+        ).spawn();
+
+        #[cfg(target_os = "windows")]
+        let sink = windows::Sink::start(audio);
+
+        #[cfg(not(target_os = "windows"))]
+        let output = match pacat {
+            Ok(output) => output,
             Err(_) => {
                 let _ = ffmpeg.kill();
                 let _ = ffmpeg.wait();
-                None
+                return None;
             }
-        }
+        };
+        #[cfg(target_os = "windows")]
+        let output = match sink {
+            Some(output) => output,
+            None => {
+                let _ = ffmpeg.kill();
+                let _ = ffmpeg.wait();
+                return None;
+            }
+        };
+        Some(Playback {
+            ffmpeg,
+            #[cfg(not(target_os = "windows"))]
+            pacat: output,
+            #[cfg(target_os = "windows")]
+            sink: output,
+            video: video.and_then(|path| play_video(path, from_us)),
+            next_frame: None,
+            started: Instant::now(),
+            from_us,
+        })
     }
 
     fn position_us(&self) -> i64 {
@@ -101,7 +122,10 @@ impl Playback {
     }
 
     fn ended(&mut self) -> bool {
-        matches!(self.pacat.try_wait(), Ok(Some(_)))
+        #[cfg(target_os = "windows")]
+        { self.sink.ended() }
+        #[cfg(not(target_os = "windows"))]
+        { matches!(self.pacat.try_wait(), Ok(Some(_))) }
     }
 
     /// The newest frame whose time the audio has reached, if a new one is due.
@@ -123,9 +147,13 @@ impl Playback {
 impl Drop for Playback {
     fn drop(&mut self) {
         let _ = self.ffmpeg.kill();
+        #[cfg(not(target_os = "windows"))]
         let _ = self.pacat.kill();
         let _ = self.ffmpeg.wait();
+        #[cfg(not(target_os = "windows"))]
         let _ = self.pacat.wait();
+        #[cfg(target_os = "windows")]
+        self.sink.stop();
         if let Some((video, _)) = self.video.as_mut() {
             let _ = video.kill();
             let _ = video.wait();
@@ -186,8 +214,8 @@ fn still(path: &Path, us: i64) -> Option<Vec<u8>> {
     (output.status.success() && !output.stdout.is_empty()).then_some(output.stdout)
 }
 
-/// Makes the child get SIGTERM when the app goes away, even after a crash, so
-/// the meeting never keeps playing on its own.
+/// Linux: terminate decoder children with the parent.
+#[cfg(not(target_os = "windows"))]
 fn die_with_parent(command: &mut Command) -> &mut Command {
     // SAFETY: prctl is async-signal-safe and touches only the child's own state.
     unsafe {
@@ -196,6 +224,12 @@ fn die_with_parent(command: &mut Command) -> &mut Command {
             Ok(())
         })
     }
+}
+
+/// On Windows child cleanup is handled when the playback is dropped.
+#[cfg(target_os = "windows")]
+fn die_with_parent(command: &mut Command) -> &mut Command {
+    command
 }
 
 /// Length of an audio file in microseconds, from ffprobe.
