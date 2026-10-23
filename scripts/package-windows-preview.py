@@ -33,6 +33,12 @@ with zipfile.ZipFile(args.ort) as z:
         sys.exit(f"Expected one official ORT DLL, found {paths}")
     with z.open(paths[0]) as source, (out/"onnxruntime.dll").open("wb") as sink:
         shutil.copyfileobj(source,sink)
+    for original, target in [("LICENSE", "ONNX-Runtime-LICENSE.txt"),
+                             ("ThirdPartyNotices.txt", "ONNX-Runtime-ThirdPartyNotices.txt")]:
+        candidates = [p for p in z.namelist() if p.endswith("/" + original)]
+        if len(candidates) == 1:
+            with z.open(candidates[0]) as source, (out/target).open("wb") as sink:
+                shutil.copyfileobj(source,sink)
 
 native = {p.name.lower():p for p in (msys/"bin").glob("*.dll")}
 seen=set()

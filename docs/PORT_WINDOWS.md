@@ -80,13 +80,23 @@ El proyecto auxiliar compila los archivos reales `audio.rs`, `audio_windows.rs` 
 docker run --rm -v "$PWD:/work" -w /work/tools/windows-audio-check meeting-recorder-linux-check sh -c 'rustup target add x86_64-pc-windows-gnu && cargo check --locked --target x86_64-pc-windows-gnu'
 ```
 
-**Resultado:** comprobación cruzada WASAPI, Named Pipes y dependencias básicas de bandeja correcta; pruebas Linux 67/67. Estas validaciones todavía no prueban el ejecutable GTK en Windows. Faltan pruebas de hardware real, la compilación Windows de GTK4 y las demás dependencias Unix.
+**Resultado:** comprobación cruzada WASAPI, Named Pipes y dependencias básicas de bandeja correcta; pruebas Linux 67/67. Además, el ejecutable Windows completo ya compiló en TuxTeam. Falta validación funcional en Windows real.
 
-## Compilación Windows (en curso en TuxTeam)
+## Primera compilación Windows completada en TuxTeam (23-10-2026)
+
+- `cargo +stable-x86_64-pc-windows-gnu check --locked --target x86_64-pc-windows-gnu --no-default-features`: **correcto**, aplicación completa con GTK4/libadwaita, WASAPI, Whisper y ONNX.
+- `cargo +stable-x86_64-pc-windows-gnu build --locked --target x86_64-pc-windows-gnu --no-default-features`: **correcto**, ejecutable Windows x64 de desarrollo (aprox. 216 MiB).
+- Distribución preliminar portable: `Z:\\miniCosas\\omarchy-meeting-recorder\\dist\\windows\\meeting-recorder-windows-preview.zip` (132.827.401 bytes, 127 MiB).
+- SHA-256: `3246b1a18f5b580000359008b044f75776ed42b7fef4dc68a8d91d9ea8d6241b`, verificado entre disco local y SMB.
+- Contiene `.exe`, FFmpeg, DLL GTK/libadwaita requeridas por análisis de imports, ONNX Runtime 1.28.3 y recursos; primer lanzamiento recomendado con `Start Meeting Recorder.cmd` tras extraer ZIP.
+- **No ejecutada ni probada funcionalmente**, por acuerdo con el usuario. Las pruebas de grabación, webcam, tray, inicio automático y transcripción corresponden al usuario.
+- Esta primera versión se compiló **sin Vulkan** para validar un baseline CPU; el GPU automático real en Windows queda pendiente de una compilación posterior.
+
+## Detalles de compilación Windows
 
 - El entorno requerido es **MSYS2 UCRT64**, con toolchain Rust `x86_64-pc-windows-gnu`; no utilizar Rust MSVC como host cuando se compila con el GCC de MSYS2.
 - Se agregó `vendor/whisper-rs-sys` 0.15.0 con un parche mínimo: aplicar `/utf-8` únicamente si `target_env = "msvc"`. La dependencia original falla al pasar esa bandera al GCC de MinGW.
-- Para Windows, `ort` utiliza la opción `load-dynamic`: ONNX Runtime se carga como DLL compatible en tiempo de ejecución. Debemos incluir la DLL en la distribución; Linux sigue con su configuración original.
+- Para Windows, `ort` utiliza la opción `load-dynamic`: ONNX Runtime 1.28.3 se carga desde la DLL oficial incluida en la distribución; Linux sigue con su configuración original.
 - La fuente original de la rama está compartida por SMB en `Z:\\miniCosas\\omarchy-meeting-recorder`; compilar sobre el disco local de TuxTeam y copiar luego artefactos a la carpeta SMB.
 
 ## Automatización de compilación (pendiente de validación CI)
@@ -94,6 +104,7 @@ docker run --rm -v "$PWD:/work" -w /work/tools/windows-audio-check meeting-recor
 - `scripts/build-windows-msys2.sh`: script para compilar Windows GNU CPU con MSYS2 UCRT64.
 - `.github/workflows/windows-ci.yml`: comprobación del ejecutable Windows con GTK4/libadwaita en un runner real; solo correrá si se publica la rama o abre un PR.
 - `src/windows_integration.rs`: integración HKCU Run y bandeja. Aún no probada en Windows.
+- `scripts/package-windows-preview.py`: copia el ejecutable, importa las DLL recursivas, FFmpeg, ONNX Runtime con licencias y recursos GTK; no ejecuta la aplicación.
 
 ## Notas de diseño
 
