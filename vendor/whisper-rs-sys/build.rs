@@ -321,6 +321,9 @@ fn main() {
 
     add_link_search_path(&out.join("build")).unwrap();
 
+    // CMake installs static archives to destination/lib; listing only the
+    // prefix directory breaks GNU linkage even when archives exist.
+    println!("cargo:rustc-link-search=native={}", destination.join("lib").display());
     println!("cargo:rustc-link-search=native={}", destination.display());
     if cfg!(feature = "intel-sycl") {
         println!("cargo:rustc-link-lib=whisper");
