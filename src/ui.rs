@@ -19,8 +19,8 @@ use crate::chapters::{self, Chapter};
 use crate::export::{self, Format, export_audio, export_tracks};
 use crate::ipc::{self, SharedStatus, Status};
 use crate::meeting::{self, Manifest};
-use crate::player::Player;
 use crate::notes::Notes;
+use crate::player::Player;
 use crate::transcribe::{self, Abort, CANCELLED, Event, LANGUAGES};
 use crate::{APP_ID, APP_NAME, settings};
 
@@ -149,15 +149,23 @@ impl Hub {
             let window = recorder.window.clone();
             let connected = Rc::new(Cell::new(false));
             recorder.window.connect_map(move |_| {
-                if connected.get() { return; }
-                let Some(surface) = window.surface() else { return };
-                let Ok(toplevel) = surface.downcast::<gtk::gdk::Toplevel>() else { return };
+                if connected.get() {
+                    return;
+                }
+                let Some(surface) = window.surface() else {
+                    return;
+                };
+                let Ok(toplevel) = surface.downcast::<gtk::gdk::Toplevel>() else {
+                    return;
+                };
                 connected.set(true);
                 let window = window.clone();
                 toplevel.connect_state_notify(move |toplevel| {
                     if crate::settings::minimize_to_tray()
                         && crate::windows_integration::active()
-                        && toplevel.state().contains(gtk::gdk::ToplevelState::MINIMIZED)
+                        && toplevel
+                            .state()
+                            .contains(gtk::gdk::ToplevelState::MINIMIZED)
                     {
                         window.set_visible(false);
                     }
@@ -461,6 +469,7 @@ struct Recorder {
     pause_began: Cell<i64>,
     pause_button: gtk::Button,
     import_button: gtk::Button,
+    open_saved_button: gtk::Button,
     model_banner: adw::Banner,
     model_downloading: Cell<bool>,
     drop_hint: gtk::Label,
@@ -563,7 +572,8 @@ impl Recorder {
                 .position(|(code, _)| *code == saved)
                 .unwrap_or(0) as u32,
         );
-        let webcam_camera = crate::webcam::pick(&crate::webcam::devices(), &settings::load_webcam());
+        let webcam_camera =
+            crate::webcam::pick(&crate::webcam::devices(), &settings::load_webcam());
         let webcam_row = adw::SwitchRow::builder()
             .title("Webcam")
             .subtitle(match &webcam_camera {
@@ -587,7 +597,8 @@ impl Recorder {
         let picture = webcam_preview.clone();
         glib::spawn_future_local(async move {
             while let Ok(frame) = frames_rx.recv().await {
-                if let Ok(texture) = gtk::gdk::Texture::from_bytes(&glib::Bytes::from_owned(frame)) {
+                if let Ok(texture) = gtk::gdk::Texture::from_bytes(&glib::Bytes::from_owned(frame))
+                {
                     picture.set_paintable(Some(&texture));
                 }
             }
@@ -654,6 +665,13 @@ impl Recorder {
             .css_classes(["flat"])
             .build();
         content.append(&import_button);
+        let open_saved_button = gtk::Button::builder()
+            .label("Open saved meeting")
+            .tooltip_text("Restore an existing meeting folder without transcribing again")
+            .halign(gtk::Align::Center)
+            .css_classes(["flat"])
+            .build();
+        content.append(&open_saved_button);
 
         // Transcribing: the animation fills the whole window.
         let animation = TranscribeAnimation::new();
@@ -766,7 +784,12 @@ impl Recorder {
             .label("New recording")
             .css_classes(["pill"])
             .build();
+        let open_saved_done_button = gtk::Button::builder()
+            .label("Open saved meeting")
+            .css_classes(["pill"])
+            .build();
         actions.append(&open_button);
+        actions.append(&open_saved_done_button);
         actions.append(&new_button);
         left.append(&actions);
 
@@ -1037,6 +1060,7 @@ impl Recorder {
             pause_began: Cell::new(0),
             pause_button,
             import_button,
+            open_saved_button,
             model_banner,
             model_downloading: Cell::new(false),
             drop_hint,
@@ -1051,7 +1075,7 @@ impl Recorder {
             live_notes: RefCell::default(),
             showing_meeting_notes: Cell::new(false),
         });
-        recorder.connect_signals(&open_button, &new_button);
+        recorder.connect_signals(&open_button, &new_button, &open_saved_done_button);
         recorder.connect_find(&find_close);
         recorder.render();
         recorder
@@ -1137,7 +1161,12 @@ impl Recorder {
         }
     }
 
-    fn connect_signals(self: &Rc<Self>, open_button: &gtk::Button, new_button: &gtk::Button) {
+    fn connect_signals(
+        self: &Rc<Self>,
+        open_button: &gtk::Button,
+        new_button: &gtk::Button,
+        open_saved_done_button: &gtk::Button,
+    ) {
         let weak = Rc::downgrade(self);
         self.notes.close_button.connect_clicked(move |_| {
             let Some(r) = weak.upgrade() else { return };
@@ -1183,7 +1212,10 @@ impl Recorder {
                 r.notes.unload();
                 r.show_page();
             } else {
-                let path = r.notes.last_path().unwrap_or_else(crate::notes::fresh_notes);
+                let path = r
+                    .notes
+                    .last_path()
+                    .unwrap_or_else(crate::notes::fresh_notes);
                 r.open_notes(&path);
             }
         });
@@ -1197,6 +1229,17 @@ impl Recorder {
                 _ => {}
             }
         });
+
+        // Saved meetings are folders; importing audio instead starts a new
+        // transcription. Keep the two flows visibly separate.
+        for button in [&self.open_saved_button, open_saved_done_button] {
+            let weak = Rc::downgrade(self);
+            button.connect_clicked(move |_| {
+                if let Some(recorder) = weak.upgrade() {
+                    recorder.choose_saved_meeting();
+                }
+            });
+        }
 
         // Import: a file dropped anywhere on the window, or picked from a dialog.
         // File managers offer a file list (Nautilus), some a single file.
@@ -1227,7 +1270,11 @@ impl Recorder {
             };
             match file.path() {
                 Some(path) => {
-                    r.confirm_import(path);
+                    if path.is_dir() || path.extension().is_some_and(|e| e == meeting::EXTENSION) {
+                        r.open_meeting(&path);
+                    } else {
+                        r.confirm_import(path);
+                    }
                     true
                 }
                 None => false,
@@ -1754,23 +1801,29 @@ impl Recorder {
     /// Nowhere else is the camera on.
     fn update_preview(&self) {
         let on = self.webcam_camera.is_some() && self.webcam_row.is_active();
-        let on_page = !self.compact.get()
-            && self.layout.visible_child_name().as_deref() == Some("record");
+        let on_page =
+            !self.compact.get() && self.layout.visible_child_name().as_deref() == Some("record");
         self.webcam_preview.set_visible(on);
         self.webcam_preview
             .set_opacity(if self.paused.get() { 0.4 } else { 1.0 });
         if !on {
-            self.webcam_preview.set_paintable(None::<&gtk::gdk::Paintable>);
+            self.webcam_preview
+                .set_paintable(None::<&gtk::gdk::Paintable>);
         }
         if matches!(self.state.get(), State::Idle | State::Done) {
-            let device = self.webcam_camera.as_ref().map(|(device, _)| device.as_path());
+            let device = self
+                .webcam_camera
+                .as_ref()
+                .map(|(device, _)| device.as_path());
             self.webcam.preview(device.filter(|_| on && on_page));
         }
     }
 
     /// The camera to record, as (device, name); None when the toggle is off.
     fn selected_webcam(&self) -> Option<(PathBuf, String)> {
-        self.webcam_camera.clone().filter(|_| self.webcam_row.is_active())
+        self.webcam_camera
+            .clone()
+            .filter(|_| self.webcam_row.is_active())
     }
 
     /// Opens the notes in `path` next to the recording page.
@@ -1796,9 +1849,17 @@ impl Recorder {
         // Next to the recorder the notes take the room; next to a transcript, the transcript does.
         let beside_recorder = shown && recording_page;
         self.view.set_hexpand(!beside_recorder);
-        self.view.set_size_request(if beside_recorder { FULL_SIZE.0 } else { -1 }, -1);
+        self.view
+            .set_size_request(if beside_recorder { FULL_SIZE.0 } else { -1 }, -1);
         self.notes.widget.set_hexpand(beside_recorder);
-        self.notes.widget.set_size_request(if shown && done_page { DONE_NOTES_WIDTH } else { -1 }, -1);
+        self.notes.widget.set_size_request(
+            if shown && done_page {
+                DONE_NOTES_WIDTH
+            } else {
+                -1
+            },
+            -1,
+        );
         self.update_preview();
         shown
     }
@@ -1818,6 +1879,9 @@ impl Recorder {
         // The bar lives on the done page. Leave it behind with the page.
         if state != State::Done {
             self.dismiss_find();
+        }
+        if self.state.get() != state {
+            crate::diagnostics::event("state", state.key());
         }
         self.state.set(state);
         let mut shared = self.shared.lock().unwrap();
@@ -2511,6 +2575,14 @@ impl Recorder {
         let Some(out) = self.result_dir.borrow().clone() else {
             return Err("no meeting folder".into());
         };
+        crate::diagnostics::event(
+            "transcribe",
+            &format!(
+                "started model={} language={}",
+                crate::models::configured(),
+                language
+            ),
+        );
         self.set_compact(false);
         if self.animation_since.get().is_none() {
             self.animation_since.set(Some(std::time::Instant::now()));
@@ -2546,10 +2618,23 @@ impl Recorder {
             let _ = events_tx.send_blocking(Event::Finished);
         });
 
+        let mut last_logged_bucket = -1;
         while let Ok(event) = events_rx.recv().await {
             match event {
-                Event::Stage(stage) => self.animation.set_stage(&stage),
+                Event::Stage(stage) => {
+                    crate::diagnostics::event("transcribe.stage", &stage);
+                    self.animation.set_stage(&stage);
+                }
                 Event::Progress(progress) => {
+                    // Record occasional progress updates, not a disk write per frame.
+                    let bucket = (progress * 10.0).floor() as i32;
+                    if bucket > last_logged_bucket {
+                        last_logged_bucket = bucket;
+                        crate::diagnostics::event(
+                            "transcribe.progress",
+                            &format!("{:.0}%", progress * 100.0),
+                        );
+                    }
                     self.animation.set_progress(progress);
                     self.shared.lock().unwrap().progress = progress;
                 }
@@ -2578,6 +2663,10 @@ impl Recorder {
             .await
             .unwrap_or_else(|_| Err("transcription stopped unexpectedly".into()));
         *self.abort.borrow_mut() = None;
+        match &result {
+            Ok(_) => crate::diagnostics::event("transcribe", "completed"),
+            Err(error) => crate::diagnostics::event("transcribe.error", error),
+        }
 
         let transcript = result?;
         // The name as it is now; it may have been edited while transcribing.
@@ -2760,7 +2849,33 @@ impl Recorder {
     }
 
     /// Shows a saved meeting on the done page, with the settings it was made with.
+    fn choose_saved_meeting(self: &Rc<Self>) {
+        if matches!(
+            self.state.get(),
+            State::Recording | State::Stopping | State::Transcribing
+        ) {
+            self.toast("Finish the current recording first");
+            return;
+        }
+        let folder = glib::home_dir().join("Documents").join("Meetings");
+        let dialog = gtk::FileDialog::builder()
+            .title("Choose a saved meeting folder")
+            .build();
+        if folder.is_dir() {
+            dialog.set_initial_folder(Some(&gio::File::for_path(folder)));
+        }
+        let recorder = self.clone();
+        dialog.select_folder(Some(&self.window), gio::Cancellable::NONE, move |result| {
+            if let Ok(selected) = result {
+                if let Some(path) = selected.path() {
+                    recorder.open_meeting(&path);
+                }
+            }
+        });
+    }
+
     fn open_meeting(self: &Rc<Self>, path: &std::path::Path) {
+        crate::diagnostics::event("meeting", &format!("open requested: {}", path.display()));
         if matches!(
             self.state.get(),
             State::Recording | State::Stopping | State::Transcribing
@@ -2781,9 +2896,19 @@ impl Recorder {
             return;
         }
         let Some((dir, manifest)) = meeting::open(path) else {
-            self.toast("This is not a meeting the recorder can open");
+            crate::diagnostics::event("meeting", "open failed: no valid manifest or legacy folder");
+            self.toast("Not a saved meeting. Select its folder inside Documents/Meetings");
             return;
         };
+        crate::diagnostics::event(
+            "meeting",
+            &format!(
+                "open succeeded; manifest speakers={} transcript={} audio={}",
+                manifest.speakers.len(),
+                dir.join("transcript.md").exists(),
+                dir.join("audio.ogg").exists()
+            ),
+        );
         // Folders from before manifests existed get one now.
         if meeting::find(&dir).is_none() {
             let _ = meeting::write(&dir, &manifest);
@@ -3677,6 +3802,14 @@ impl Recorder {
         if typed.len() != people.len() {
             return;
         }
+        crate::diagnostics::event(
+            "speakers",
+            &format!(
+                "apply requested; visible={} manifest={}",
+                typed.len(),
+                manifest.speakers.len()
+            ),
+        );
         let names: Vec<String> = manifest
             .speakers
             .iter()
@@ -3717,6 +3850,10 @@ impl Recorder {
         }
         let text = std::fs::read_to_string(&transcript).ok();
         self.redraw_transcript(text.as_deref().unwrap_or(""));
+        crate::diagnostics::event(
+            "speakers",
+            &format!("save done; merged={} count={}", merged, names.len()),
+        );
         if merged {
             self.toast("Merged into one speaker");
         } else {

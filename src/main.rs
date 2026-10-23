@@ -11,6 +11,7 @@ mod agent;
 mod animation;
 mod audio;
 mod chapters;
+mod diagnostics;
 mod diarize;
 mod export;
 mod find;
@@ -128,6 +129,7 @@ fn send_or_open(lines: Vec<String>) -> glib::ExitCode {
 }
 
 fn main() -> glib::ExitCode {
+    diagnostics::init();
     match std::env::args().nth(1).as_deref() {
         #[cfg(target_os = "windows")]
         None => {
@@ -155,7 +157,7 @@ fn main() -> glib::ExitCode {
             } else {
                 ui::run_hidden(None)
             }
-        },
+        }
         Some("watch") => {
             ipc::watch();
             glib::ExitCode::SUCCESS

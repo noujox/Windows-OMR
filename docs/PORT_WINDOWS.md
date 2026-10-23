@@ -82,6 +82,15 @@ docker run --rm -v "$PWD:/work" -w /work/tools/windows-audio-check meeting-recor
 
 **Resultado:** comprobación cruzada WASAPI, Named Pipes y dependencias básicas de bandeja correcta; pruebas Linux 67/67. Además, el ejecutable Windows completo ya compiló en TuxTeam. Falta validación funcional en Windows real.
 
+## Recuperación de reuniones y logs persistentes (23-10-2026)
+
+- La interfaz anterior solo mostraba **Import audio**, que vuelve a transcribir el contenido: no equivalía a abrir una reunión existente.
+- Se añadió **Open saved meeting** en las páginas inicial y de resultados. Selecciona la **carpeta de la reunión** en `Documents/Meetings`, carga el manifest, los nombres de hablantes, la transcripción y el audio previamente generado; no vuelve a ejecutar Whisper.
+- Una carpeta de reunión arrastrada a la ventana ahora se abre como reunión existente, en vez de tratarse como importación de audio.
+- `src/diagnostics.rs` guarda el log en `%LOCALAPPDATA%\\omarchy-meeting-recorder\\logs\\app.log` en Windows; rotación a `app.previous.log` al superar 5 MiB. En Linux usa la caché del usuario.
+- El registro incluye inicio, cambios de estado, etapas/progreso de transcripción, resultado de apertura, guardado de nombres y pánicos Rust; **no** incluye el texto de las transcripciones. Los crashes nativos de GTK pueden ocurrir fuera del hook de pánico, por lo que se conserva Windows Event Log/CrashDumps como respaldo.
+- Las 68 pruebas Linux pasaron. No se realizó ninguna prueba GUI; corresponden al usuario.
+
 ## Hotfix: cierre inesperado al confirmar un hablante (23-10-2026)
 
 - El usuario confirmó que alcanzó la pantalla final, editó varios hablantes y sospecha que el cierre ocurrió al presionar **Enter** para guardar un hablante. La transcripción ya estaba guardada en `transcript.md`.
@@ -89,7 +98,7 @@ docker run --rm -v "$PWD:/work" -w /work/tools/windows-audio-check meeting-recor
 - Hallazgo en `src/ui.rs`: el evento `AdwEntryRow::apply` invocaba inmediatamente `apply_speakers()`, que reconstruye y elimina la misma fila mientras GTK todavía procesaba su señal. Se modificó para programar el guardado con `glib::idle_add_local_once`, como ya hacía `focus::leave`.
 - Corrección compilada en TuxTeam y validada por las 67 pruebas automatizadas Linux; **no se ha probado manualmente** el comportamiento de Enter.
 - Paquete nuevo sin reemplazar el original: `Z:\\miniCosas\\omarchy-meeting-recorder\\dist\\windows\\meeting-recorder-windows-preview-rename-fix.zip`. El original `meeting-recorder-windows-preview.zip` permanece para comparación.
-- Pendiente agregar logs persistentes y, si vuelve a fallar, revisar el stack de los minidumps con Windows Debugger para confirmar causa exacta.
+- Los logs persistentes se añadieron en el siguiente cambio. Si vuelve a fallar, revisar el stack de los minidumps con Windows Debugger para confirmar causa exacta.
 
 ## Primera compilación Windows completada en TuxTeam (23-10-2026)
 
