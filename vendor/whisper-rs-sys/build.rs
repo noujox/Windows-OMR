@@ -304,6 +304,21 @@ fn main() {
 
     let destination = config.build();
 
+    // whisper.cpp's ggml CMakeLists.txt clears the `lib` prefix on Windows,
+    // producing ggml.a / ggml-base.a / ggml-cpu.a. The Rust GNU linker
+    // expects libggml.a etc. Copy those archives under GNU-compatible names
+    // within Cargo's own build output; leave MSVC and Linux untouched.
+    if cfg!(all(target_os = "windows", target_env = "gnu")) {
+        let library_dir = destination.join("lib");
+        for stem in ["ggml", "ggml-base", "ggml-cpu", "ggml-vulkan"] {
+            let original = library_dir.join(format!("{stem}.a"));
+            if original.exists() {
+                std::fs::copy(&original, library_dir.join(format!("lib{stem}.a")))
+                    .expect("could not stage MinGW-compatible ggml archive");
+            }
+        }
+    }
+
     add_link_search_path(&out.join("build")).unwrap();
 
     println!("cargo:rustc-link-search=native={}", destination.display());
