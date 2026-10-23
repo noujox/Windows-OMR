@@ -8,6 +8,8 @@ mod player_windows;
 #[cfg(target_os = "windows")]
 #[path = "../../../src/ipc.rs"]
 mod ipc;
+#[cfg(target_os = "windows")]
+mod tray_smoke;
 mod settings {
     pub fn microphone_device() -> String {
         "default".into()

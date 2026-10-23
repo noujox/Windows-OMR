@@ -141,6 +141,29 @@ impl Hub {
 
     fn add_window(self: &Rc<Self>, app: &adw::Application) -> Rc<Recorder> {
         let recorder = Recorder::new(app, self);
+        #[cfg(target_os = "windows")]
+        {
+            // Windows sends a GDK toplevel-state change when the user minimizes
+            // the window. Hide it completely while the tray keeps GTK alive.
+            use gtk::gdk::prelude::*;
+            let window = recorder.window.clone();
+            let connected = Rc::new(Cell::new(false));
+            recorder.window.connect_map(move |_| {
+                if connected.get() { return; }
+                let Some(surface) = window.surface() else { return };
+                let Ok(toplevel) = surface.downcast::<gtk::gdk::Toplevel>() else { return };
+                connected.set(true);
+                let window = window.clone();
+                toplevel.connect_state_notify(move |toplevel| {
+                    if crate::settings::minimize_to_tray()
+                        && crate::windows_integration::active()
+                        && toplevel.state().contains(gtk::gdk::ToplevelState::MINIMIZED)
+                    {
+                        window.set_visible(false);
+                    }
+                });
+            });
+        }
         self.windows.borrow_mut().push(recorder.clone());
         let weak = Rc::downgrade(self);
         let status = recorder.shared.clone();
@@ -210,6 +233,10 @@ impl Hub {
     /// `title` is what came with it: the name for `start`, the notes file for
     /// `notes`, "" without one.
     fn command(self: &Rc<Self>, app: &adw::Application, command: &str, title: &str) {
+        if command == "open" {
+            self.target(app).window.present();
+            return;
+        }
         if command == "new-window" {
             self.add_window(app).window.present();
             return;
@@ -258,12 +285,28 @@ impl Hub {
 /// Runs the app. `open` is a `.meeting-recorder` file or a meeting folder to show
 /// instead of starting a new recording.
 pub fn run(open: Option<&str>) -> glib::ExitCode {
+    run_impl(open, false)
+}
+
+#[cfg(target_os = "windows")]
+pub fn run_hidden(open: Option<&str>) -> glib::ExitCode {
+    run_impl(open, true)
+}
+
+fn run_impl(open: Option<&str>, hidden_at_startup: bool) -> glib::ExitCode {
     let app = adw::Application::builder()
         .application_id(APP_ID)
         .flags(gio::ApplicationFlags::HANDLES_OPEN)
         .build();
     app.connect_startup(|app| {
         load_css();
+        #[cfg(target_os = "windows")]
+        {
+            if let Err(err) = crate::windows_integration::sync_startup() {
+                eprintln!("Meeting Recorder: could not configure Windows startup: {err}");
+            }
+            crate::windows_integration::install(app);
+        }
         crate::theme::follow(|| {
             for window in gtk::Window::list_toplevels() {
                 redraw(&window);
@@ -308,7 +351,13 @@ pub fn run(open: Option<&str>) -> glib::ExitCode {
             let recorder = recorder.clone();
             glib::idle_add_local_once(move || recorder.offer_recovery());
         }
-        recorder.window.present();
+        #[cfg(target_os = "windows")]
+        let hidden = first && hidden_at_startup && crate::windows_integration::active();
+        #[cfg(not(target_os = "windows"))]
+        let hidden = false;
+        if !hidden {
+            recorder.window.present();
+        }
     });
     match open {
         Some(path) => app.run_with_args(&[APP_NAME, path]),

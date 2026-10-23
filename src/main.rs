@@ -25,6 +25,8 @@ mod theme;
 mod transcribe;
 mod ui;
 mod webcam;
+#[cfg(target_os = "windows")]
+mod windows_integration;
 
 use gtk::glib;
 
@@ -127,6 +129,15 @@ fn send_or_open(lines: Vec<String>) -> glib::ExitCode {
 
 fn main() -> glib::ExitCode {
     match std::env::args().nth(1).as_deref() {
+        #[cfg(target_os = "windows")]
+        None => {
+            if ipc::send("open") {
+                glib::ExitCode::SUCCESS
+            } else {
+                ui::run(None)
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
         None => ui::run(None),
         Some("--version" | "-V") => {
             let backend = if cfg!(feature = "vulkan") {
@@ -137,6 +148,14 @@ fn main() -> glib::ExitCode {
             println!("{APP_NAME} {} ({backend})", env!("CARGO_PKG_VERSION"));
             glib::ExitCode::SUCCESS
         }
+        #[cfg(target_os = "windows")]
+        Some("--start-hidden") => {
+            if ipc::send("ping") {
+                glib::ExitCode::SUCCESS
+            } else {
+                ui::run_hidden(None)
+            }
+        },
         Some("watch") => {
             ipc::watch();
             glib::ExitCode::SUCCESS

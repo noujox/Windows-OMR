@@ -36,12 +36,15 @@
 - [ ] Terminar manejo nativo de procesos: FFmpeg y webcam tienen compatibilidad básica, pero faltan Windows Job Objects para finalizar subprocesos tras caídas. Agente IA se deshabilita de forma segura en Windows hasta disponer de un runner aislado.
 - [x] Adaptación inicial de webcam Windows a FFmpeg DirectShow, con enumeración y previsualización/segmentos; pendiente prueba física y validación de nombres especiales de cámaras.
 - [ ] Validar política de aceleración GPU/CPU con dispositivos reales Windows y empaquetar los runtimes GPU pertinentes.
-- [ ] Implementar bandeja, minimizar y restaurar; mantener grabación al ocultarse.
-- [ ] Implementar autostart del usuario, con ventana oculta y sin grabar.
+- [x] Implementación inicial de bandeja Windows con acciones Abrir, Grabar, Pausar, Detener y Salir; ocultar ventana al minimizar, manteniendo el proceso vivo. Pendiente prueba en Windows real.
+- [x] Inicio automático mediante HKCU Run en Windows con `--start-hidden`, sin iniciar grabaciones. Pendiente verificar ciclo de vida y desinstalación en Windows real.
 - [x] Ejecutar acciones configuradas en Windows mediante PowerShell no interactivo, conservando variables de entorno `MEETING_*`.
-- [ ] Nuevo paquete Windows con GTK4/libadwaita, FFmpeg y runtime Whisper; pruebas reales x64.
+- [ ] Empaquetar Windows incluyendo GTK4/libadwaita, FFmpeg y runtime ONNX/Whisper; pruebas reales x64. Hay script MSYS2 y CI definidos, pero el chequeo del ejecutable completo aún no ha sido ejecutado.
 - [ ] Construcción, test de integración audio con Meet/Zoom/Teams; distribución e instalador.
 - [ ] Desacoplar el ID/nombre upstream solo después de decidir nombre comercial y estrategia de migración.
+- [ ] Confirmar integración de icono de bandeja, autostart y minimización en Windows real; verificar aplicaciones GTK4 empaquetadas.
+- [ ] Implementar Windows Job Objects para matar procesos multimedia si la app termina inesperadamente.
+- [ ] Implementar runner seguro de agentes Windows; hasta entonces, generación de capítulos por agente está deshabilitada deliberadamente.
 
 ## Estructura de las dependencias actuales
 
@@ -77,12 +80,18 @@ El proyecto auxiliar compila los archivos reales `audio.rs`, `audio_windows.rs` 
 docker run --rm -v "$PWD:/work" -w /work/tools/windows-audio-check meeting-recorder-linux-check sh -c 'rustup target add x86_64-pc-windows-gnu && cargo check --locked --target x86_64-pc-windows-gnu'
 ```
 
-**Resultado:** comprobación cruzada de tipos WASAPI correcta y 66/66 pruebas Linux. Faltan pruebas de hardware real, la compilación Windows de GTK4 y las demás dependencias Unix.
+**Resultado:** comprobación cruzada WASAPI, Named Pipes y dependencias básicas de bandeja correcta; pruebas Linux 67/67. Estas validaciones todavía no prueban el ejecutable GTK en Windows. Faltan pruebas de hardware real, la compilación Windows de GTK4 y las demás dependencias Unix.
+
+## Compilación Windows (no ejecutada todavía)
+
+- `scripts/build-windows-msys2.sh`: primer script para compilar Windows GNU CPU con MSYS2 MINGW64.
+- `.github/workflows/windows-ci.yml`: comprobación del ejecutable Windows con GTK4/libadwaita en un runner real; solo correrá si se publica la rama o abre un PR.
+- `src/windows_integration.rs`: integración HKCU Run y bandeja. Aún no probada en Windows.
 
 ## Notas de diseño
 
 No reemplazar el IPC con un puerto TCP sin autenticación: el estado de la reunión puede contener nombres y rutas sensibles. Preferir pipes restringidos al usuario.
 
-La configuración de inicio automático es una preferencia inicialmente habilitada, **no** una acción de sistema hasta implementar la integración Windows.
+En Windows, `sync_startup()` registra o elimina el inicio automático en HKCU de acuerdo con la preferencia persistente. Esta integración solo se ejecuta cuando arranca la aplicación GUI, no al comprobar comandos CLI. Debe probarse en una sesión Windows real.
 
 El puerto debe continuar con fases verificables y commits pequeños. No modificar `main`.

@@ -25,3 +25,5 @@ vulkan = ["whisper-rs/vulkan"]
 wasapi = "0.26.0"
 interprocess = "2.4.4"
 widestring = "1.2.1"
+tray-icon = "0.26.1"
+winreg = "0.55.0"

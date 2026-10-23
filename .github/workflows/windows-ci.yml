@@ -1,0 +1,36 @@
+name: Windows compiler check
+
+on:
+  push:
+    branches:
+      - port/windows-native
+  pull_request:
+
+jobs:
+  windows-gnu:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-clang
+            mingw-w64-x86_64-gtk4
+            mingw-w64-x86_64-libadwaita
+            mingw-w64-x86_64-ffmpeg
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.92.0
+          targets: x86_64-pc-windows-gnu
+      - name: Compile full Windows application (CPU baseline)
+        shell: msys2 {0}
+        env:
+          PKG_CONFIG_PATH: /mingw64/lib/pkgconfig
+          CMAKE_GENERATOR: Ninja
+        run: cargo check --locked --target x86_64-pc-windows-gnu --no-default-features

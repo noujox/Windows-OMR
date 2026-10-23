@@ -97,7 +97,8 @@ pub fn now() -> i64 {
 /// Commands a client may send, one per line. `start` may be followed by a
 /// space and the meeting's name, `notes` by the path of a notes file, and
 /// `name` by a name for the meeting about to be recorded.
-pub const COMMANDS: [&str; 7] = [
+pub const COMMANDS: [&str; 8] = [
+    "open",
     "name",
     "start",
     "stop",
@@ -372,6 +373,8 @@ mod tests {
             Some(("start", "Product Review".into()))
         );
         assert_eq!(parse_command("stop\n"), Some(("stop", String::new())));
+        assert_eq!(parse_command("open\n"), Some(("open", String::new())));
+        assert_eq!(parse_command("ping\n"), None);
         // Only start takes a name.
         assert_eq!(parse_command("stop now\n"), None);
         assert_eq!(parse_command("starting\n"), None);
