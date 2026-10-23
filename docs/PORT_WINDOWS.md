@@ -62,9 +62,10 @@
 ```sh
 docker build -f Dockerfile.linux-check -t meeting-recorder-linux-check .
 docker run --rm --cpus=3 --memory=8g -v "$PWD:/work" -w /work meeting-recorder-linux-check cargo check --locked --no-default-features
+docker run --rm --cpus=3 --memory=8g -v "$PWD:/work" -w /work meeting-recorder-linux-check cargo test --locked --no-default-features
 ```
 
-Estos comandos construyen y validan únicamente el backend Linux, sin instalar Rust/GTK en el servidor anfitrión. El chequeo `cargo check --locked --no-default-features` pasó correctamente con Rust 1.92.0; quedaron advertencias `dead_code` por ajustes Windows todavía no conectados a la interfaz.
+Estos comandos construyen y validan únicamente el backend Linux, sin instalar Rust/GTK en el servidor anfitrión. El chequeo `cargo check --locked --no-default-features` pasó correctamente con Rust 1.92.0, y `cargo test --locked --no-default-features` pasó **64 pruebas de 64**. Quedaron advertencias `dead_code` por ajustes Windows todavía no conectados a la interfaz.
 
 ## Notas de diseño
 
