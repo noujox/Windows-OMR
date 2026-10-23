@@ -82,6 +82,15 @@ docker run --rm -v "$PWD:/work" -w /work/tools/windows-audio-check meeting-recor
 
 **Resultado:** comprobación cruzada WASAPI, Named Pipes y dependencias básicas de bandeja correcta; pruebas Linux 67/67. Además, el ejecutable Windows completo ya compiló en TuxTeam. Falta validación funcional en Windows real.
 
+## Hotfix: cierre inesperado al confirmar un hablante (23-10-2026)
+
+- El usuario confirmó que alcanzó la pantalla final, editó varios hablantes y sospecha que el cierre ocurrió al presionar **Enter** para guardar un hablante. La transcripción ya estaba guardada en `transcript.md`.
+- Windows Event Log documentó un crash en `libgobject-2.0-0.dll` (`0xc0000005`, 16:23:08); se guardaron volcados de memoria en `%LOCALAPPDATA%\\CrashDumps`.
+- Hallazgo en `src/ui.rs`: el evento `AdwEntryRow::apply` invocaba inmediatamente `apply_speakers()`, que reconstruye y elimina la misma fila mientras GTK todavía procesaba su señal. Se modificó para programar el guardado con `glib::idle_add_local_once`, como ya hacía `focus::leave`.
+- Corrección compilada en TuxTeam y validada por las 67 pruebas automatizadas Linux; **no se ha probado manualmente** el comportamiento de Enter.
+- Paquete nuevo sin reemplazar el original: `Z:\\miniCosas\\omarchy-meeting-recorder\\dist\\windows\\meeting-recorder-windows-preview-rename-fix.zip`. El original `meeting-recorder-windows-preview.zip` permanece para comparación.
+- Pendiente agregar logs persistentes y, si vuelve a fallar, revisar el stack de los minidumps con Windows Debugger para confirmar causa exacta.
+
 ## Primera compilación Windows completada en TuxTeam (23-10-2026)
 
 - `cargo +stable-x86_64-pc-windows-gnu check --locked --target x86_64-pc-windows-gnu --no-default-features`: **correcto**, aplicación completa con GTK4/libadwaita, WASAPI, Whisper y ONNX.
