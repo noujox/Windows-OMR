@@ -12,6 +12,24 @@ use std::time::{Duration, Instant};
 
 pub const RATE: u32 = 48_000;
 pub const CHANNELS: u32 = 2;
+
+/// Logical audio endpoint, independent of the PulseAudio device naming scheme.
+#[derive(Clone, Copy, Debug)]
+pub enum Input {
+    Microphone,
+    Computer,
+}
+
+impl Input {
+    /// Linux backend: the system default source and default output monitor.
+    /// The Windows backend will resolve these roles through WASAPI.
+    fn pulse_source(self) -> &'static str {
+        match self {
+            Self::Microphone => "@DEFAULT_SOURCE@",
+            Self::Computer => "@DEFAULT_MONITOR@",
+        }
+    }
+}
 /// 20 ms of s16le audio.
 const CHUNK_BYTES: usize = (RATE / 50 * 2 * CHANNELS) as usize;
 const FRAME_BYTES: usize = (2 * CHANNELS) as usize;
@@ -40,8 +58,8 @@ pub struct Source {
 }
 
 impl Source {
-    /// Starts capturing `device`, a PulseAudio source name such as `@DEFAULT_MONITOR@`.
-    pub fn spawn(device: &'static str) -> Self {
+    /// Starts capturing one logical audio input.
+    pub fn spawn(input: Input) -> Self {
         let inner = Arc::new(Mutex::new(Inner {
             levels: VecDeque::from(vec![0.0; HISTORY]),
             recording: None,
@@ -50,7 +68,7 @@ impl Source {
         let shared = inner.clone();
         thread::spawn(move || {
             loop {
-                capture(device, &shared);
+                capture(input.pulse_source(), &shared);
                 // parec exits when the device goes away; try again.
                 thread::sleep(Duration::from_secs(1));
             }
@@ -250,6 +268,12 @@ mod tests {
     use super::*;
 
     const CHUNK_FRAMES: u64 = (CHUNK_BYTES / FRAME_BYTES) as u64;
+
+    #[test]
+    fn captures_system_default_input_and_output() {
+        assert_eq!(Input::Microphone.pulse_source(), "@DEFAULT_SOURCE@");
+        assert_eq!(Input::Computer.pulse_source(), "@DEFAULT_MONITOR@");
+    }
 
     fn ms(n: u64) -> Duration {
         Duration::from_millis(n)

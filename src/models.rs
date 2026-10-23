@@ -87,6 +87,11 @@ pub fn set_override(name: &str) {
 }
 
 pub fn config_file() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    return glib::user_config_dir()
+        .join(crate::APP_NAME)
+        .join("config.toml");
+    #[cfg(not(target_os = "windows"))]
     std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
@@ -126,6 +131,9 @@ fn file_name(model: &Model) -> String {
 }
 
 fn data_dir() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    return glib::user_data_dir();
+    #[cfg(not(target_os = "windows"))]
     std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())

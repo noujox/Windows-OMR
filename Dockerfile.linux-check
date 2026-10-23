@@ -1,0 +1,12 @@
+# Linux regression-check image for the fork.
+# This checks the retained Linux backend without modifying host packages.
+FROM rust:1.90-slim
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    build-essential clang cmake pkg-config libgtk-4-dev libadwaita-1-dev \
+    libclang-dev ca-certificates git \
+    && rm -rf /var/lib/apt/lists/*
+# gtk4 0.11.5 and associated crates require rustc 1.92 or newer.
+RUN rustup toolchain install 1.92.0 --profile minimal && rustup default 1.92.0
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /work

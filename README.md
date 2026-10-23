@@ -1,4 +1,10 @@
-# Meeting Recorder
+# Meeting Recorder — Windows port (work in progress)
+
+**This branch is under active development and cannot yet run on Windows.** The Omarchy plugin and Arch packaging described below have been removed from this branch. See [Windows port progress and engineering plan](docs/PORT_WINDOWS.md). The original README below is retained for technical context; its installation instructions apply to the upstream Linux version only.
+
+---
+
+# Original upstream README
 
 A meeting recorder for [Omarchy](https://omarchy.org). It records your microphone and the computer audio as two tracks, and when you stop you get a transcript with speakers, chapters and a player. You can also drop in a recording you already have. Everything is transcribed on your own machine.
 

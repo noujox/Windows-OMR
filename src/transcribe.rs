@@ -549,6 +549,9 @@ fn locate(map: &[(usize, Region)], glued_ms: i64) -> (i64, usize) {
 // Model
 
 fn data_dir() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    return glib::user_data_dir();
+    #[cfg(not(target_os = "windows"))]
     std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
@@ -1018,19 +1021,46 @@ fn load_whisper(events: &Events, abort: &Abort) -> Result<WhisperContext, String
     emit(events, Event::Stage("Loading model".into()));
     emit(events, Event::Progress(0.0));
     whisper_rs::install_logging_hooks();
-    let mut context_params = WhisperContextParameters::default();
-    context_params.use_gpu(cfg!(feature = "vulkan"));
-    // Word times aligned on the attention heads (DTW): the plain token times
-    // drift by up to a second, too much to tell where one speaker takes over.
-    // A model file of unknown kind gets plain token times.
-    if let Some(model_preset) = crate::models::dtw_preset() {
-        context_params.dtw_parameters(DtwParameters {
-            mode: DtwMode::ModelPreset { model_preset },
-            ..Default::default()
-        });
+
+    // In "auto" mode GPU is preferred, but a missing/incompatible adapter must
+    // never prevent transcription. Recreate DTW settings on the CPU retry.
+    let acceleration = crate::settings::acceleration();
+    if acceleration == "gpu" && !cfg!(feature = "vulkan") {
+        return Err("GPU acceleration was selected, but this build has no Vulkan support".into());
     }
-    WhisperContext::new_with_params(&model, context_params)
-        .map_err(|e| format!("could not load the model {}: {e}", model.display()))
+    let gpu = cfg!(feature = "vulkan") && acceleration != "cpu";
+    let parameters = |use_gpu| {
+        let mut params = WhisperContextParameters::default();
+        params.use_gpu(use_gpu);
+        // Aligned word timestamps are needed for reliable speaker transitions.
+        if let Some(model_preset) = crate::models::dtw_preset() {
+            params.dtw_parameters(DtwParameters {
+                mode: DtwMode::ModelPreset { model_preset },
+                ..Default::default()
+            });
+        }
+        params
+    };
+
+    match WhisperContext::new_with_params(&model, parameters(gpu)) {
+        Ok(context) => Ok(context),
+        Err(gpu_error) if gpu && acceleration == "auto" => {
+            emit(
+                events,
+                Event::Stage("GPU unavailable; switching to CPU".into()),
+            );
+            WhisperContext::new_with_params(&model, parameters(false)).map_err(|cpu_error| {
+                format!(
+                    "could not load model {} on GPU ({gpu_error}) or CPU ({cpu_error})",
+                    model.display()
+                )
+            })
+        }
+        Err(error) => Err(format!(
+            "could not load the model {}: {error}",
+            model.display()
+        )),
+    }
 }
 
 /// Whisper over the stretches of `track` with sound in them, then the lines.

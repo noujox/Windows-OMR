@@ -1,6 +1,5 @@
-//! Remembered preferences: the audio format, the transcription language,
-//! the webcam, the name you go by in transcripts and whether the bar widget
-//! was offered.
+//! Persisted desktop preferences, independent of Omarchy.
+//! The "default" device follows the operating system's selection.
 
 use std::path::PathBuf;
 
@@ -11,6 +10,9 @@ use crate::export::Format;
 use crate::transcribe::LANGUAGES;
 
 fn path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    let state = glib::user_config_dir();
+    #[cfg(not(target_os = "windows"))]
     let state = std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
@@ -95,11 +97,65 @@ pub fn save_your_name(name: &str) {
     save("your_name", name);
 }
 
-/// Whether the app already asked to put its widget in the bar.
-pub fn bar_widget_offered() -> bool {
-    load()["bar_widget_offered"].as_str() == Some("yes")
+/// Device IDs default to the operating system choice.
+pub fn microphone_device() -> String {
+    load()["microphone_device"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("default")
+        .to_owned()
 }
 
-pub fn set_bar_widget_offered() {
-    save("bar_widget_offered", "yes");
+pub fn output_device() -> String {
+    load()["output_device"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("default")
+        .to_owned()
+}
+
+pub fn save_microphone_device(device: &str) {
+    save("microphone_device", device);
+}
+
+pub fn save_output_device(device: &str) {
+    save("output_device", device);
+}
+
+/// Whisper is the only enabled STT backend in this milestone.
+pub fn stt_engine() -> &'static str {
+    "whisper"
+}
+
+/// Automatic GPU detection with CPU fallback is the desired runtime policy.
+/// Wiring the backend selection and retry is a separate development step.
+pub fn acceleration() -> &'static str {
+    match load()["acceleration"].as_str() {
+        Some("cpu") => "cpu",
+        Some("gpu") => "gpu",
+        _ => "auto",
+    }
+}
+
+pub fn save_acceleration(mode: &str) {
+    if matches!(mode, "auto" | "cpu" | "gpu") {
+        save("acceleration", mode);
+    }
+}
+
+/// Integration defaults; tray/startup OS plumbing is not implemented yet.
+pub fn minimize_to_tray() -> bool {
+    load()["minimize_to_tray"].as_str() != Some("no")
+}
+
+pub fn save_minimize_to_tray(enabled: bool) {
+    save("minimize_to_tray", if enabled { "yes" } else { "no" });
+}
+
+pub fn start_with_windows() -> bool {
+    load()["start_with_windows"].as_str() != Some("no")
+}
+
+pub fn save_start_with_windows(enabled: bool) {
+    save("start_with_windows", if enabled { "yes" } else { "no" });
 }

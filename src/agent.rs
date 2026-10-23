@@ -1,5 +1,5 @@
-//! Runs a prompt through the coding agent Omarchy is set up with
-//! (`omarchy-default-agent`), headless and without tools.
+//! Runs prompts through an explicitly configured local agent without tools.
+//! Agent selection no longer depends on Omarchy.
 //!
 //! This is a port of the runner in the text-transform plugin
 //! (github.com/jankeesvw/omarchy-text-transform, `bin/text-transform`: agent
@@ -88,7 +88,7 @@ const CODEX_NO_TOOLS: &[&str] = &[
 /// The default agent, when one is set and can be driven safely.
 #[derive(Clone, Debug)]
 pub struct Agent {
-    /// The id `omarchy-default-agent` prints, e.g. "claude".
+    /// The configured agent ID, e.g. "claude".
     pub id: String,
     /// For the UI, e.g. "Claude Code".
     pub name: &'static str,
@@ -97,7 +97,7 @@ pub struct Agent {
 /// Why there is no usable agent, for a message in the UI.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Unavailable {
-    /// No default agent picked (`omarchy default agent <name>`).
+    /// No agent explicitly selected.
     Unset,
     /// Picked but not on PATH.
     Missing(String),
@@ -111,7 +111,7 @@ impl std::fmt::Display for Unavailable {
             Unavailable::Unset => {
                 write!(
                     f,
-                    "No default agent. Pick one with: omarchy default agent <name>"
+                    "No agent selected. Set MEETING_RECORDER_AGENT or agent in config.toml"
                 )
             }
             Unavailable::Missing(id) => write!(f, "{id} is not installed"),
@@ -127,20 +127,7 @@ pub fn default_agent() -> Option<Agent> {
 
 /// The default agent, or why it cannot be used.
 pub fn status() -> Result<Agent, Unavailable> {
-    let id = Command::new("omarchy-default-agent")
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()
-        .map(|out| {
-            String::from_utf8_lossy(&out.stdout)
-                .lines()
-                .next()
-                .unwrap_or("")
-                .split_whitespace()
-                .collect::<String>()
-        })
-        .unwrap_or_default();
+    let id = configured_agent_id();
     if id.is_empty() {
         return Err(Unavailable::Unset);
     }
@@ -155,6 +142,33 @@ pub fn status() -> Result<Agent, Unavailable> {
         return Err(Unavailable::Refused(blocker));
     }
     Ok(Agent { id, name })
+}
+
+/// Explicit opt-in; the existing supported() allow-list still controls execution.
+fn configured_agent_id() -> String {
+    std::env::var("MEETING_RECORDER_AGENT")
+        .ok()
+        .or_else(|| {
+            std::fs::read_to_string(crate::models::config_file())
+                .ok()
+                .and_then(|text| {
+                    text.lines().find_map(|line| {
+                        let (key, value) = line.split_once('=')?;
+                        (key.trim() == "agent").then(|| {
+                            value
+                                .split('#')
+                                .next()
+                                .unwrap_or("")
+                                .trim()
+                                .trim_matches('"')
+                                .to_owned()
+                        })
+                    })
+                })
+        })
+        .unwrap_or_default()
+        .trim()
+        .to_owned()
 }
 
 fn label(id: &str) -> &'static str {

@@ -1,12 +1,11 @@
 //! Meeting Recorder: records a meeting in two tracks (mic and computer
 //! audio), transcribes it with whisper.cpp after the call, and streams live
-//! levels to a bar widget.
+//! levels to the application and optional automation clients.
 
 mod actions;
 mod agent;
 mod animation;
 mod audio;
-mod bar_widget;
 mod chapters;
 mod diarize;
 mod export;
@@ -182,7 +181,7 @@ fn main() -> glib::ExitCode {
             println!("  stop          stop the running recording (for a keybinding)");
             println!("  compact       switch the recording window between full and compact");
             println!("  pause         pause or resume the running recording");
-            println!("  watch         stream the recorder state as NDJSON, for the bar widget");
+            println!("  watch         stream the recorder state as NDJSON, for automation");
             println!(
                 "  wait          wait until the recording is done and print its folder (--audio: once the audio is saved)"
             );

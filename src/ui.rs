@@ -14,7 +14,7 @@ use gtk::{gio, glib};
 
 use crate::agent::{self, Agent};
 use crate::animation::TranscribeAnimation;
-use crate::audio::{HISTORY, Source, to_meter};
+use crate::audio::{HISTORY, Input, Source, to_meter};
 use crate::chapters::{self, Chapter};
 use crate::export::{self, Format, export_audio, export_tracks};
 use crate::ipc::{self, SharedStatus, Status};
@@ -76,8 +76,8 @@ fn source_track(meeting_dir: &std::path::Path) -> PathBuf {
 /// Choices in the import dialog: automatic, then a fixed number.
 const SPEAKER_CHOICES: [&str; 7] = ["Automatic", "1", "2", "3", "4", "5", "6"];
 
-/// What all windows share: the audio sources, the socket for the bar widget
-/// and the keybindings, and the list of open windows. Every window can show
+/// What all windows share: the audio sources, IPC controls and the
+/// list of open windows. Every window can show
 /// its own meeting; only one records at a time.
 struct Hub {
     mic: Source,
@@ -92,8 +92,8 @@ struct Hub {
 impl Hub {
     fn new(app: &adw::Application) -> Rc<Self> {
         let hub = Rc::new(Hub {
-            mic: Source::spawn("@DEFAULT_SOURCE@"),
-            system: Source::spawn("@DEFAULT_MONITOR@"),
+            mic: Source::spawn(Input::Microphone),
+            system: Source::spawn(Input::Computer),
             statuses: ipc::Statuses::default(),
             windows: RefCell::default(),
         });
@@ -142,7 +142,6 @@ impl Hub {
     fn add_window(self: &Rc<Self>, app: &adw::Application) -> Rc<Recorder> {
         let recorder = Recorder::new(app, self);
         self.windows.borrow_mut().push(recorder.clone());
-        recorder.learn_hypr_address();
         let weak = Rc::downgrade(self);
         let status = recorder.shared.clone();
         recorder.window.connect_destroy(move |_| {
@@ -171,7 +170,7 @@ impl Hub {
             .find(|r| matches!(r.state.get(), State::Recording | State::Stopping))
     }
 
-    /// Where the bar widget and the keybindings act: the window recording,
+    /// Where external controls act: the window recording,
     /// else the one transcribing, else the one in front, else a new one.
     fn target(self: &Rc<Self>, app: &adw::Application) -> Rc<Recorder> {
         let recorders = self.recorders();
@@ -401,10 +400,6 @@ struct Recorder {
     system: Source,
     shared: SharedStatus,
     hub: std::rc::Weak<Hub>,
-    /// This window's address in Hyprland, learnt once it is on screen, so a
-    /// resize reaches this window and not another one of the app.
-    hypr_address: RefCell<Option<String>>,
-
     state: Cell<State>,
     compact: Cell<bool>,
     full_size: Cell<(i32, i32)>,
@@ -982,7 +977,6 @@ impl Recorder {
             system,
             shared,
             hub: Rc::downgrade(hub),
-            hypr_address: RefCell::default(),
             state: Cell::new(State::Idle),
             compact: Cell::new(false),
             full_size: Cell::new(FULL_SIZE),
@@ -1697,39 +1691,13 @@ impl Recorder {
         }
     }
 
-    /// The meeting's folder for the bar widget and `wait`, "" before it has one.
+    /// The meeting folder for external control clients, "" before it has one.
     fn folder_text(&self) -> String {
         self.result_dir
             .borrow()
             .as_ref()
             .map(|dir| dir.display().to_string())
             .unwrap_or_default()
-    }
-
-    /// Once the window is on screen: its own Hyprland window is the one of
-    /// this process that no other window of the app has claimed yet.
-    fn learn_hypr_address(self: &Rc<Self>) {
-        if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_none() {
-            return;
-        }
-        let weak = Rc::downgrade(self);
-        self.window.connect_map(move |_| {
-            let weak = weak.clone();
-            glib::timeout_add_local_once(Duration::from_millis(300), move || {
-                let Some(r) = weak.upgrade() else { return };
-                let Some(hub) = r.hub.upgrade() else { return };
-                let taken: Vec<String> = hub
-                    .recorders()
-                    .iter()
-                    .filter_map(|other| other.hypr_address.borrow().clone())
-                    .collect();
-                let clients = hyprctl_json("clients");
-                let unclaimed = clients.as_ref().and_then(|c| c.as_array()).and_then(|clients| {
-                    unclaimed_window(clients, std::process::id(), &taken)
-                });
-                *r.hypr_address.borrow_mut() = unclaimed;
-            });
-        });
     }
 
     /// The preview shows the camera while the toggle is on and the recording
@@ -1932,14 +1900,9 @@ impl Recorder {
         } else {
             (360, 200)
         };
-        let current = (self.window.width(), self.window.height());
         self.window.set_size_request(minimum.0, minimum.1);
         self.window.set_default_size(size.0, size.1);
         self.window.queue_resize();
-        let address = self.hypr_address.borrow().clone();
-        glib::timeout_add_local_once(Duration::from_millis(50), move || {
-            hyprland_resize(size, current, address);
-        });
     }
 
     fn tick(&self) {
@@ -1983,15 +1946,8 @@ impl Recorder {
             self.window.set_size_request(360, 200);
             self.full_size.get()
         };
-        let current = (self.window.width(), self.window.height());
         self.window.set_default_size(size.0, size.1);
         self.window.queue_resize();
-        // A compositor may ignore a client asking to change the size of a
-        // window that is already on screen; on Hyprland, ask it directly.
-        let address = self.hypr_address.borrow().clone();
-        glib::timeout_add_local_once(Duration::from_millis(50), move || {
-            hyprland_resize(size, current, address);
-        });
     }
 
     /// Recorded time so far, without the pauses.
@@ -2188,8 +2144,6 @@ impl Recorder {
             .into_iter()
             .find(|dir| Some(dir) != current.as_ref())
         else {
-            // One question at a time: the bar widget waits for a start without a recovery.
-            self.offer_bar_widget();
             return;
         };
         let note = read_recording_note(&staging);
@@ -2219,49 +2173,6 @@ impl Recorder {
             }
             "save" => this.recover(staging.clone(), note.clone()),
             _ => {}
-        });
-        dialog.present(Some(&self.window));
-    }
-
-    /// Asks once whether the widget may go in the Omarchy bar.
-    fn offer_bar_widget(self: &Rc<Self>) {
-        if !crate::bar_widget::should_offer() {
-            return;
-        }
-        let dialog = adw::AlertDialog::new(
-            Some("Add Meeting Recorder to your bar?"),
-            Some(
-                "The bar then shows a live waveform while you record, and nothing the rest of the time. Clicking it opens the app.",
-            ),
-        );
-        dialog.add_response("no", "No Thanks");
-        dialog.add_response("add", "Add to Bar");
-        dialog.set_response_appearance("add", adw::ResponseAppearance::Suggested);
-        dialog.set_default_response(Some("add"));
-        dialog.set_close_response("no");
-        let this = self.clone();
-        dialog.connect_response(None, move |_, response| {
-            if response != "add" {
-                settings::set_bar_widget_offered();
-                return;
-            }
-            let (tx, rx) = async_channel::bounded(1);
-            std::thread::spawn(move || {
-                let _ = tx.send_blocking(crate::bar_widget::add());
-            });
-            let this = this.clone();
-            glib::spawn_future_local(async move {
-                match rx.recv().await {
-                    Ok(Ok(())) => {
-                        settings::set_bar_widget_offered();
-                        this.toast("Added to the bar");
-                    }
-                    Ok(Err(message)) => {
-                        this.toast(&format!("Could not add it to the bar: {message}"))
-                    }
-                    Err(_) => {}
-                }
-            });
         });
         dialog.present(Some(&self.window));
     }
@@ -3984,129 +3895,6 @@ impl Paragraphs {
     }
 }
 
-/// Resizes this app's window through Hyprland, keeping it where it is.
-/// Does nothing outside Hyprland.
-/// Resizes this window: the one at `address` when it is known, else the one
-/// that is `current` in size now. With more windows open, the others keep theirs.
-fn hyprland_resize((width, height): (i32, i32), current: (i32, i32), address: Option<String>) {
-    if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_none() {
-        return;
-    }
-    let pid = std::process::id();
-    std::thread::spawn(move || {
-        // Right after start the window may not be mapped yet; wait for it a little.
-        let mut window = None;
-        for _ in 0..30 {
-            window = match &address {
-                Some(address) => client_at(address),
-                None => own_window(pid, current),
-            };
-            if window.is_some() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-        let Some(window) = window else { return };
-        let Some(address) = window["address"].as_str().map(str::to_owned) else {
-            return;
-        };
-        hyprctl_dispatch(&format!(
-            "hl.dsp.window.resize({{ x = {width}, y = {height}, window = \"address:{address}\" }})"
-        ));
-        // Hyprland grows a floating window around its centre; a strip that was
-        // dragged into a corner would then stick out. Bring it back on screen.
-        std::thread::sleep(std::time::Duration::from_millis(150));
-        if let Some((x, y)) = client_at(&address).and_then(|w| on_screen(&w)) {
-            hyprctl_dispatch(&format!(
-                "hl.dsp.window.move({{ x = {x}, y = {y}, window = \"address:{address}\" }})"
-            ));
-        }
-    });
-}
-
-fn hyprctl_json(what: &str) -> Option<serde_json::Value> {
-    let out = std::process::Command::new("hyprctl")
-        .args([what, "-j"])
-        .output()
-        .ok()?;
-    serde_json::from_slice(&out.stdout).ok()
-}
-
-fn hyprctl_dispatch(call: &str) {
-    let _ = std::process::Command::new("hyprctl")
-        .arg("dispatch")
-        .arg(call)
-        .output();
-}
-
-/// This process's floating window that is `size` now, as `hyprctl clients -j`
-/// describes it.
-fn own_window(pid: u32, size: (i32, i32)) -> Option<serde_json::Value> {
-    pick_window(hyprctl_json("clients")?.as_array()?, pid, size).cloned()
-}
-
-/// Of this process's floating windows, the one of `size`; with more of that
-/// size, or none (a window not on screen yet), the one focused last.
-fn pick_window(clients: &[serde_json::Value], pid: u32, size: (i32, i32)) -> Option<&serde_json::Value> {
-    let mut own: Vec<&serde_json::Value> = clients
-        .iter()
-        .filter(|c| c["pid"].as_u64() == Some(u64::from(pid)) && c["floating"] == true)
-        .collect();
-    own.sort_by_key(|c| c["focusHistoryID"].as_i64().unwrap_or(i64::MAX));
-    let sized = |c: &&&serde_json::Value| {
-        c["size"][0].as_i64() == Some(i64::from(size.0)) && c["size"][1].as_i64() == Some(i64::from(size.1))
-    };
-    own.iter().find(sized).or(own.first()).copied()
-}
-
-/// The first of this process's floating windows, most recently focused
-/// first, whose address is not in `taken`.
-fn unclaimed_window(clients: &[serde_json::Value], pid: u32, taken: &[String]) -> Option<String> {
-    let mut own: Vec<&serde_json::Value> = clients
-        .iter()
-        .filter(|c| c["pid"].as_u64() == Some(u64::from(pid)) && c["floating"] == true)
-        .collect();
-    own.sort_by_key(|c| c["focusHistoryID"].as_i64().unwrap_or(i64::MAX));
-    own.iter()
-        .filter_map(|c| c["address"].as_str())
-        .find(|address| !taken.iter().any(|t| t == address))
-        .map(str::to_owned)
-}
-
-/// A window by its Hyprland address.
-fn client_at(address: &str) -> Option<serde_json::Value> {
-    hyprctl_json("clients")?
-        .as_array()?
-        .iter()
-        .find(|c| c["address"].as_str() == Some(address))
-        .cloned()
-}
-
-/// Where the window has to go to be fully visible on its monitor, outside the
-/// bar and with a small margin; None when it already is.
-fn on_screen(window: &serde_json::Value) -> Option<(i64, i64)> {
-    const MARGIN: i64 = 12;
-    let (x, y) = (window["at"][0].as_i64()?, window["at"][1].as_i64()?);
-    let (w, h) = (window["size"][0].as_i64()?, window["size"][1].as_i64()?);
-    let monitors = hyprctl_json("monitors")?;
-    let monitor = monitors
-        .as_array()?
-        .iter()
-        .find(|m| m["id"].as_i64() == window["monitor"].as_i64())?;
-    let scale = monitor["scale"].as_f64().unwrap_or(1.0).max(0.1);
-    let reserved = |i: usize| monitor["reserved"][i].as_i64().unwrap_or(0);
-    let left = monitor["x"].as_i64()? + reserved(0) + MARGIN;
-    let top = monitor["y"].as_i64()? + reserved(1) + MARGIN;
-    let right =
-        monitor["x"].as_i64()? + (monitor["width"].as_f64()? / scale) as i64 - reserved(2) - MARGIN;
-    let bottom = monitor["y"].as_i64()? + (monitor["height"].as_f64()? / scale) as i64
-        - reserved(3)
-        - MARGIN;
-    let nx = x.min(right - w).max(left);
-    let ny = y.min(bottom - h).max(top);
-    (nx != x || ny != y).then_some((nx, ny))
-}
-
 /// Fills in a meeting name that nobody typed: without the apply button,
 /// which would ask to confirm a change that was never made.
 fn set_name(row: &adw::EntryRow, text: &str) {
@@ -4428,35 +4216,4 @@ fn meter_block(name: &str, meter: &gtk::DrawingArea) -> gtk::Box {
             .build(),
     );
     block
-}
-
-#[cfg(test)]
-mod tests {
-    use super::pick_window;
-
-    #[test]
-    fn a_resize_goes_to_the_window_it_is_for() {
-        let window = |address: &str, w: i64, focus: i64| {
-            serde_json::json!({ "address": address, "pid": 7, "floating": true, "size": [w, 700], "focusHistoryID": focus })
-        };
-        let clients = vec![window("0xa", 480, 1), window("0xb", 1100, 0), window("0xc", 480, 2)];
-        let pick = |size| pick_window(&clients, 7, size).map(|c| c["address"].clone());
-        assert_eq!(pick((1100, 700)), Some("0xb".into()));
-        // Two of that size: the one focused last.
-        assert_eq!(pick((480, 700)), Some("0xa".into()));
-        // Not on screen yet: the focused one.
-        assert_eq!(pick((0, 0)), Some("0xb".into()));
-        assert_eq!(pick_window(&clients, 8, (480, 700)), None);
-    }
-
-    #[test]
-    fn a_new_window_claims_the_address_no_other_window_has() {
-        let window = |address: &str, focus: i64| {
-            serde_json::json!({ "address": address, "pid": 7, "floating": true, "focusHistoryID": focus })
-        };
-        let clients = vec![window("0xa", 1), window("0xb", 0)];
-        assert_eq!(super::unclaimed_window(&clients, 7, &[]), Some("0xb".into()));
-        assert_eq!(super::unclaimed_window(&clients, 7, &["0xb".into()]), Some("0xa".into()));
-        assert_eq!(super::unclaimed_window(&clients, 7, &["0xa".into(), "0xb".into()]), None);
-    }
 }
