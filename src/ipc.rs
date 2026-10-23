@@ -15,20 +15,25 @@
 //! `omarchy-meeting-recorder wait` reads the same lines to wait for a meeting
 //! to be done and print its folder, for scripts and agents.
 
+#[cfg(not(target_os = "windows"))]
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 #[cfg(not(target_os = "windows"))]
 use std::os::unix::net::{UnixListener, UnixStream};
 #[cfg(not(target_os = "windows"))]
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+#[cfg(not(target_os = "windows"))]
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+#[cfg(not(target_os = "windows"))]
+use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(not(target_os = "windows"))]
 use gtk::glib;
 
 #[cfg(not(target_os = "windows"))]
 use crate::APP_NAME;
+#[cfg(not(target_os = "windows"))]
 use crate::audio::{Source, to_meter};
 
 const MAX_LINE: usize = 4096;

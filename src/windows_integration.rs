@@ -110,7 +110,7 @@ pub fn install(app: &adw::Application) -> bool {
     let app = app.clone();
     glib::timeout_add_local(Duration::from_millis(100), move || {
         while let Ok(event) = MenuEvent::receiver().try_recv() {
-            match event.id().to_string().as_str() {
+            match event.id().0.as_str() {
                 "open" => app.activate(),
                 "start" => { ipc::send("start"); },
                 "pause" => { ipc::send("pause"); },
