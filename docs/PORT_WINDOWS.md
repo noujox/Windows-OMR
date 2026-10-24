@@ -82,6 +82,15 @@ docker run --rm -v "$PWD:/work" -w /work/tools/windows-audio-check meeting-recor
 
 **Resultado:** comprobación cruzada WASAPI, Named Pipes y dependencias básicas de bandeja correcta; pruebas Linux 67/67. Además, el ejecutable Windows completo ya compiló en TuxTeam. Falta validación funcional en Windows real.
 
+## Hotfix IPC satélite Windows: conexiones descartadas (24-10-2026)
+
+- **Causa raíz confirmada:** `src/ipc_windows.rs::serve()` llamaba a `set_send_timeout(Some(20 ms))` sobre una `interprocess::local_socket::Stream` de Windows. En la versión resuelta `interprocess 2.4.6`, `src/os/windows/named_pipe/local_socket/stream.rs` implementa ese método devolviendo siempre `no_timeouts()` (error Unsupported). El código trataba ese error como fatal y hacía `continue`, descartando todas las conexiones entrantes sin adjuntar lector.
+- **Síntomas:** host Native Messaging devolvía `connected=true` porque su `write_all` podía tener éxito incluso cuando el servidor desconectaba inmediatamente. Cliente Node conectado directamente a `\\\\.\\pipe\\meeting-recorder.user-control.v1` reprodujo `EPIPE` al escribir un `satellite-beat` seguro. En `app.log` nunca aparecieron eventos `ipc.satellite` de ese intento.
+- **PowerShell validado:** `install.ps1` sin errores sintácticos, ID válido de 32 caracteres `a`-`p`, manifiesto JSON en la ubicación registrada de Edge, host existente y `allowed_origins` coincidente. El instalador no era la causa.
+- **Solución:** quitado el timeout incompatible; `attach_client()` clona el stream, lanza `read_commands` y conserva el writer. Errores de clonación quedan logueados.
+- **Regresión Windows:** prueba aislada `ipc::windows::windows_pipe_tests::incoming_named_pipe_commands_are_not_dropped`: pasa en `TuxTeam`, usando una tubería propia y un `satellite-beat` que nunca puede comenzar una grabación. Linux: 75 pruebas aprobadas.
+- Pendiente prueba con **app reiniciada** y reunión Meet real, siempre iniciada por el usuario. Ninguna grabación fue iniciada durante el diagnóstico.
+
 ## Hotfix de renombrado consecutivo (24-10-2026)
 
 - Segundo crash confirmado por Windows Event Log a las 00:23:59, `libgobject-2.0-0.dll`, excepción `0xc0000005` y también `0xc000041d`.
