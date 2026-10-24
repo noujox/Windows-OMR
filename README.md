@@ -114,7 +114,7 @@ Chapters are an extra, not a requirement: without an agent the button is simply 
 
 ### Runs your own actions
 
-Put a few scripts of your own under **Actions** on the done page: store the transcript in your notes, publish it, mail it around. They go in `~/.config/omarchy-meeting-recorder/config.toml`, each with a name for the menu and a command. An action can also run on its own, as soon as the transcript is done. Until there is one, the button is **Add actions…** and explains how. See [Actions](#actions).
+Put a few scripts of your own under **Actions** on the done page: store the transcript in your notes, publish it, mail it around. They go in `~/.config/omarchy-meeting-recorder/config.toml`, each with a name for the menu and a command. An action can also run on its own, as soon as the transcript is done. When none are configured, this optional menu stays hidden. See [Actions](#actions).
 
 ### Wears your Omarchy theme
 

@@ -500,8 +500,6 @@ struct Recorder {
     copy_button: gtk::Button,
     /// Your own scripts from config.toml, hidden when there are none.
     actions_button: gtk::MenuButton,
-    /// In its place when there are none: opens the page on how to add them.
-    add_actions_button: gtk::Button,
     again_button: gtk::Button,
     done_title_row: adw::EntryRow,
     done_group: adw::PreferencesGroup,
@@ -882,13 +880,6 @@ impl Recorder {
             .visible(false)
             .build();
         left.append(&actions_button);
-        let add_actions_button = gtk::Button::builder()
-            .label("Add actions…")
-            .tooltip_text("How to run your own scripts on a meeting")
-            .css_classes(["pill"])
-            .visible(false)
-            .build();
-        left.append(&add_actions_button);
 
         let actions = gtk::Box::builder().spacing(8).homogeneous(true).build();
         let open_button = gtk::Button::builder()
@@ -1126,7 +1117,6 @@ impl Recorder {
             button,
             copy_button,
             actions_button,
-            add_actions_button,
             again_button,
             done_title_row,
             done_group,
@@ -1648,12 +1638,6 @@ impl Recorder {
                 r.refresh_actions();
             }
         });
-        self.add_actions_button.connect_clicked(|_| {
-            let _ = gio::AppInfo::launch_default_for_uri(
-                crate::actions::DOCS,
-                None::<&gio::AppLaunchContext>,
-            );
-        });
         if let Some(action) = self.window.lookup_action("run-action") {
             let weak = Rc::downgrade(self);
             action
@@ -1751,7 +1735,6 @@ impl Recorder {
         }
         self.actions_button.set_menu_model(Some(&menu));
         self.actions_button.set_visible(!actions.is_empty());
-        self.add_actions_button.set_visible(actions.is_empty());
     }
 
     /// Runs one of your actions on this meeting from the menu.

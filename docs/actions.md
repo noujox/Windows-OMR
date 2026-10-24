@@ -4,7 +4,7 @@ Actions are your own scripts, one click away on the done page of every meeting. 
 
 <p align="center"><img src="../screenshots/actions-menu.webp" alt="Clicking Actions on the done page: the view zooms in on the menu with Store transcript in Obsidian and Publish as public transcript" width="700"></p>
 
-Until you add one, the done page shows **Add actions…**, which brings you here.
+The **Actions** menu is only visible if actions have been configured. There is no setup button in the Windows port; configure scripts manually if you need this advanced feature.
 
 ## Adding an action
 
