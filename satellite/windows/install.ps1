@@ -7,7 +7,7 @@ if ($ExtensionId -cnotmatch '^[a-p]{32}$') {
     throw 'ExtensionId must be the 32-character ID shown in chrome://extensions or edge://extensions.'
 }
 $hostName = 'com.computux.meeting_recorder_satellite'
-$folder = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$folder = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $exe = Join-Path $folder 'meeting-recorder-satellite-host.exe'
 if (!(Test-Path $exe -PathType Leaf)) { throw "Missing satellite host executable at $exe" }
 $manifest = Join-Path $folder "$hostName.json"
