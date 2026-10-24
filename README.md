@@ -119,7 +119,7 @@ This work exists because the original recorder is worth bringing to another plat
 **All credit for the original project and its design goes to [Jankees van Woezik](https://github.com/jankeesvw) and the upstream contributors.** This is a community-maintained, **unofficial** port, not an upstream Windows release or an affiliation with the original maintainer.
 
 - **Original project:** [jankeesvw/omarchy-meeting-recorder](https://github.com/jankeesvw/omarchy-meeting-recorder)
-- **This Windows fork:** [noujox/omarchy-meeting-recorder](https://github.com/noujox/omarchy-meeting-recorder)
+- **This Windows fork:** [noujox/Windows-OMR](https://github.com/noujox/Windows-OMR)
 - **Windows development notes:** [docs/PORT_WINDOWS.md](docs/PORT_WINDOWS.md)
 - **License:** [MIT](LICENSE), retaining the original copyright notice
 
