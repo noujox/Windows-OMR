@@ -251,7 +251,12 @@ impl Hub {
     }
 
     fn satellite_event(self: &Rc<Self>, app: &adw::Application, cmd: &str, session: &str) {
-        if !settings::satellite_enabled() { return; }
+        let enabled = settings::satellite_enabled();
+        // Log the command type, not the browser's session identifier.
+        if cmd != "satellite-beat" || !enabled {
+            crate::diagnostics::event("satellite.received", &format!("cmd={cmd} enabled={enabled}"));
+        }
+        if !enabled { return; }
         // A browser event must not take ownership while a user-driven
         // recording, stopping or transcription is already in progress.
         let busy = self.recorders().iter().any(|r| {
@@ -259,6 +264,9 @@ impl Hub {
                 || matches!(r.state.get(), State::Recording | State::Stopping | State::Transcribing)
         });
         let action = self.satellite.borrow_mut().event(cmd, session, busy, std::time::Instant::now());
+        if cmd == "satellite-join" {
+            crate::diagnostics::event("satellite.decision", &format!("busy={busy} action={action:?}"));
+        }
         match action {
             Some(SatelliteAction::Start) => {
                 let r = self.free_window(app);

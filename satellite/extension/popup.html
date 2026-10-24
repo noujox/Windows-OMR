@@ -5,6 +5,8 @@
 <label class="switch"><span>Detección automática<br><small>Meet · Teams web · Zoom web</small></span><input id="enabled" type="checkbox"></label>
 <p id="status" role="status">Detección desactivada.</p>
 <p id="connection" class="note" aria-live="polite">Esperando detectar una reunión.</p>
+<button id="retry" type="button">Reenviar inicio de reunión</button>
+<small>Solo en una llamada activa. Puede iniciar la grabación si la app está habilitada.</small>
 <p class="note">Solo detecta llamadas activas en el navegador. Nunca termina grabaciones; las pausa al salir y avisa a Meeting Recorder.</p>
 <div class="footer"><small>ID de extensión: <code id="extension-id"></code></small><button id="copy">Copiar ID</button></div>
 <script src="popup.js"></script>

@@ -5,9 +5,10 @@ const vm = require('node:vm');
 const path = require('node:path');
 const base = path.resolve(__dirname, '../extension');
 
-function detector(route, visible = true, label = 'Salir de la llamada') {
+function detector(route, visible = true, label = 'Salir de la llamada', retry = false) {
   const sent = [];
   let probe;
+  let receive;
   const button = {
     disabled: false,
     textContent: '',
@@ -26,12 +27,21 @@ function detector(route, visible = true, label = 'Salir de la llamada') {
     setInterval: fn => { probe = fn; },
     setTimeout: () => {},
     addEventListener: () => {},
-    chrome: { runtime: { sendMessage: data => { sent.push(data); return Promise.resolve(); } } },
+    chrome: { runtime: {
+      sendMessage: data => { sent.push(data); return Promise.resolve(); },
+      onMessage: {addListener: fn => {receive = fn;}},
+    } },
+    console,
     Date,
   };
   vm.runInNewContext(fs.readFileSync(path.join(base,'detector.js'), 'utf8'), context);
   probe();
   probe();
+  if (retry) {
+    let response;
+    receive({type:'satellite-retry'}, {}, reply => {response=reply;});
+    assert.equal(response?.active, visible && label === 'Salir de la llamada');
+  }
   return sent;
 }
 
@@ -41,6 +51,10 @@ assert.equal(detector('/meet/wpe-ofqg-hij/', true).length, 1, 'nested Meet path 
 assert.equal(detector('/meet/').length, 0, 'Meet lobby must not trigger recording');
 assert.equal(detector('/meet/wpe-ofqg-hij', false).length, 0, 'URL alone is insufficient');
 assert.equal(detector('/meet/wpe-ofqg-hij', true, 'Join now').length, 0, 'only active leave control qualifies');
+assert.equal(detector('/meet/wpe-ofqg-hij', true, 'Salir de la llamada', true).length, 2,
+  'explicit retry on a live call sends a fresh join');
+assert.equal(detector('/meet/wpe-ofqg-hij', false, 'Salir de la llamada', true).length, 0,
+  'retry must not claim a page without an active call');
 
 async function background() {
   let listener;

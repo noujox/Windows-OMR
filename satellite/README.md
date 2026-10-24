@@ -39,4 +39,6 @@ El instalador crea solamente claves de usuario HKCU, nunca requiere permisos de 
 `satellite/extension`: extensión Manifest V3 para Chrome y Edge.
 `satellite/windows/install.ps1`: registro por usuario.
 
-Logs de la aplicación: `%LOCALAPPDATA%\omarchy-meeting-recorder\logs\app.log`.
+El popup indica cuando **el host nativo** pudo enviar el mensaje al canal local, pero ese estado no confirma que la aplicación haya iniciado a grabar. Si una llamada estaba activa antes de habilitar la automatización, puedes pulsar **Reenviar inicio de reunión** en el popup: es una acción manual que solicita iniciar la grabación de la llamada activa, sujeta a las mismas protecciones de la app.
+
+Logs de la aplicación: `%LOCALAPPDATA%\omarchy-meeting-recorder\logs\app.log`. El binario actualizado registra el tipo de evento en `ipc.satellite`, si la función estaba habilitada en `satellite.received`, y la decisión (por ejemplo `Start` o `None`) en `satellite.decision`. No registra IDs ni contenido de reuniones.

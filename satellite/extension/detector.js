@@ -89,6 +89,15 @@
   observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true,
     attributeFilter: ["aria-label", "title", "data-tid", "class", "hidden"] });
   setInterval(probe, 2000);
+  // Explicit opt-in retry from the popup. Never send a join just because the
+  // native host connected: this requires the user's click and a live call.
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg?.type !== "satellite-retry") return false;
+    const live = active && hasLeaveControl();
+    if (live) notify("join");
+    sendResponse({active: live});
+    return false;
+  });
   addEventListener("pagehide", () => { if (active) notify("leave"); }, { once: true });
   probe();
 })();

@@ -125,8 +125,21 @@ fn read_commands(mut stream: Stream, commands: &async_channel::Sender<Command>) 
         match reader.by_ref().take(MAX_LINE as u64).read_line(&mut line) {
             Ok(0) | Err(_) => return,
             Ok(_) => {
-                if let Some(command) = parse_command(&line) {
-                    let _ = commands.send_blocking(command);
+                match parse_command(&line) {
+                    Some(command) => {
+                        // Record command type only; never log the browser's
+                        // session token or the user's meeting content.
+                        if command.0.starts_with("satellite-") {
+                            crate::diagnostics::event("ipc.satellite", command.0);
+                        }
+                        if commands.send_blocking(command).is_err() {
+                            crate::diagnostics::event("ipc.error", "command dispatch channel closed");
+                        }
+                    }
+                    None if line.starts_with("satellite-") => {
+                        crate::diagnostics::event("ipc.error", "satellite command rejected by parser");
+                    }
+                    _ => {}
                 }
             }
         }
