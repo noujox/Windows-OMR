@@ -507,6 +507,12 @@ struct Recorder {
     done_group: adw::PreferencesGroup,
     /// One name row per speaker, rebuilt for every meeting.
     speaker_rows: RefCell<Vec<adw::EntryRow>>,
+    /// Enter and focus-leave can fire together. Only queue one save per cycle.
+    speaker_save_pending: Cell<bool>,
+    /// Suppress focus callbacks when intentionally detaching speaker fields.
+    speaker_rows_rebuilding: Cell<bool>,
+    /// A simple rename must not destroy the focused input on Windows/GTK.
+    keep_speaker_rows: Cell<bool>,
     again_language_row: adw::ComboRow,
     done_icon: gtk::Image,
     done_heading: gtk::Label,
@@ -1125,6 +1131,9 @@ impl Recorder {
             done_title_row,
             done_group,
             speaker_rows: RefCell::default(),
+            speaker_save_pending: Cell::new(false),
+            speaker_rows_rebuilding: Cell::new(false),
+            keep_speaker_rows: Cell::new(false),
             again_language_row,
             done_icon,
             done_heading,
@@ -3826,10 +3835,21 @@ impl Recorder {
     /// One name row per person under the meeting name. Speakers given the same
     /// name share a row: that is how two voices that were one person are merged.
     fn show_speakers(self: &Rc<Self>) {
+        // In the common case of renaming different speakers, keep every
+        // EntryRow alive and focused while only rebuilding the transcript.
+        // The previous implementation removed the active GtkEntry when a user
+        // pressed Enter. That also emitted focus-leave and queued another save.
+        if self.keep_speaker_rows.get() {
+            crate::diagnostics::event("speakers", "keeping input rows after rename");
+            return;
+        }
+
+        self.speaker_rows_rebuilding.set(true);
         for row in self.speaker_rows.borrow_mut().drain(..) {
             self.done_group.remove(&row);
         }
         let Some(manifest) = self.manifest.borrow().clone() else {
+            self.speaker_rows_rebuilding.set(false);
             return;
         };
         let mut rows = Vec::new();
@@ -3864,20 +3884,14 @@ impl Recorder {
             let weak = Rc::downgrade(self);
             row.connect_apply(move |_| {
                 if let Some(r) = weak.upgrade() {
-                    // AdwEntryRow emits "apply" while its embedded GtkEntry
-                    // still processes Enter. apply_speakers() rebuilds and
-                    // removes these rows; doing so in the signal handler can
-                    // destroy the active GObject and crash GTK on Windows.
-                    // Schedule the rebuild only after the signal has returned.
-                    glib::idle_add_local_once(move || r.apply_speakers());
+                    r.queue_speaker_save("enter");
                 }
             });
             let focus = gtk::EventControllerFocus::new();
             let weak = Rc::downgrade(self);
             focus.connect_leave(move |_| {
                 if let Some(r) = weak.upgrade() {
-                    // Deferred: saving rebuilds these rows.
-                    glib::idle_add_local_once(move || r.apply_speakers());
+                    r.queue_speaker_save("focus-leave");
                 }
             });
             row.add_controller(focus);
@@ -3885,6 +3899,24 @@ impl Recorder {
             rows.push(row);
         }
         *self.speaker_rows.borrow_mut() = rows;
+        self.speaker_rows_rebuilding.set(false);
+    }
+
+    /// Defer a single save until the GTK signal has returned. This is
+    /// intentionally idempotent across Enter and focus-leave callbacks.
+    fn queue_speaker_save(self: &Rc<Self>, trigger: &str) {
+        if self.speaker_rows_rebuilding.get() || self.speaker_save_pending.replace(true) {
+            return;
+        }
+        crate::diagnostics::event("speakers", &format!("save queued by {trigger}"));
+        let weak = Rc::downgrade(self);
+        glib::idle_add_local_once(move || {
+            let Some(r) = weak.upgrade() else { return };
+            r.speaker_save_pending.set(false);
+            if !r.speaker_rows_rebuilding.get() {
+                r.apply_speakers();
+            }
+        });
     }
 
     /// Renames the speakers in transcript.md and the manifest. A name that
@@ -3958,7 +3990,12 @@ impl Recorder {
             settings::save_your_name(you);
         }
         let text = std::fs::read_to_string(&transcript).ok();
+        // Only a true speaker merge changes how many input fields are needed.
+        // Preserve the existing fields and GTK focus for ordinary renames,
+        // including a sequence of Enter edits on different speakers.
+        self.keep_speaker_rows.set(!merged);
         self.redraw_transcript(text.as_deref().unwrap_or(""));
+        self.keep_speaker_rows.set(false);
         crate::diagnostics::event(
             "speakers",
             &format!("save done; merged={} count={}", merged, names.len()),
