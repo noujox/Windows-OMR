@@ -7,7 +7,7 @@ Estado: versión de desarrollo. **La detección viene desactivada por defecto** 
 - Content script solo lee indicadores visibles de una llamada activa de **Google Meet, Teams web y Zoom web**. No lee audio, vídeo, participantes ni chats.
 - Service worker MV3 valida el dominio, administra la sesión temporal y envía eventos por **Native Messaging**.
 - Host nativo `meeting-recorder-satellite-host.exe` se comunica por Named Pipe con **una instancia ya abierta** de Meeting Recorder. No ejecuta ni abre Meeting Recorder.
-- Un comando `satellite-join` inicia la grabación solo si no existe una grabación activa. `satellite-leave` solicita pausa, nunca `stop`.
+- Un comando `satellite-join` inicia la grabación solo si la app no está grabando, deteniendo ni transcribiendo otra reunión. `satellite-leave` solicita pausa, nunca `stop`. Los latidos (`beat`) no pueden iniciar una grabación que haya sido omitida por una actividad manual.
 - Si se pierde contacto con la pestaña, el watchdog pausa de forma conservadora después de 75 segundos sin latidos. Transcurridos 10 segundos desde la pausa se trae Meeting Recorder al frente para que el usuario elija Stop o Resume.
 - Si se reconecta **antes** de finalizar el plazo, se reanuda solo una pausa causada por el satélite. La pausa manual tiene prioridad.
 

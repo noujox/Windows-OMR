@@ -38,7 +38,10 @@ impl Satellite {
                 if action == "satellite-beat" && !had { return None; }
                 self.active.insert(session.to_owned(), now);
                 if !self.owned {
-                    if manually_busy { return None; }
+                    // Only a new join may claim ownership. A heartbeat from
+                    // a call ignored while a manual recording was active must
+                    // never start a new recording after the user stops.
+                    if manually_busy || action != "satellite-join" { return None; }
                     self.owned = true;
                     self.show_at = None;
                     return Some(Action::Start);
@@ -131,6 +134,22 @@ mod tests {
         assert_eq!(s.event("satellite-join", key(), true, now + Duration::from_secs(4)), Some(Action::Resume));
         assert_eq!(s.tick(now + Duration::from_secs(80), false), Some(Action::Pause));
     }
+    #[test]
+    fn heartbeat_never_takes_over_after_manual_busy_session() {
+        let now = Instant::now();
+        let mut s = Satellite::default();
+        // The call starts while the user is recording manually.
+        assert_eq!(s.event("satellite-join", key(), true, now), None);
+        assert!(!s.owns_recording());
+        // The manual recording ends; this is the same browser call, not a
+        // new call. A heartbeat must not silently start a new recording.
+        assert_eq!(
+            s.event("satellite-beat", key(), false, now + Duration::from_secs(5)),
+            None
+        );
+        assert!(!s.owns_recording());
+    }
+
     #[test]
     fn lost_tab_pauses_not_stops() {
         let now = Instant::now();

@@ -130,7 +130,7 @@ impl Hub {
         });
         app.add_action(&new_window);
 
-        // Browser heartbeat watchdog: pause after 18 seconds without news.
+        // Browser heartbeat watchdog: pause after 75 seconds without news.
         let weak = Rc::downgrade(&hub);
         glib::timeout_add_local(std::time::Duration::from_secs(1), move || {
             let Some(hub) = weak.upgrade() else { return glib::ControlFlow::Break };
@@ -252,7 +252,12 @@ impl Hub {
 
     fn satellite_event(self: &Rc<Self>, app: &adw::Application, cmd: &str, session: &str) {
         if !settings::satellite_enabled() { return; }
-        let busy = self.recording().is_some();
+        // A browser event must not take ownership while a user-driven
+        // recording, stopping or transcription is already in progress.
+        let busy = self.recorders().iter().any(|r| {
+            r.starting.get()
+                || matches!(r.state.get(), State::Recording | State::Stopping | State::Transcribing)
+        });
         let action = self.satellite.borrow_mut().event(cmd, session, busy, std::time::Instant::now());
         match action {
             Some(SatelliteAction::Start) => {
