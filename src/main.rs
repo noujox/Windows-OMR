@@ -22,6 +22,7 @@ mod nemotron;
 mod notes;
 mod player;
 mod settings;
+mod satellite;
 mod theme;
 mod transcribe;
 mod ui;

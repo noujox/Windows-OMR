@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Meeting Recorder Satellite",
+  "version": "0.1.0",
+  "description": "Detects live Meet, Teams and Zoom browser calls and asks local Meeting Recorder to start/pause.",
+  "permissions": [
+    "nativeMessaging",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://meet.google.com/*",
+    "https://teams.microsoft.com/*",
+    "https://teams.cloud.microsoft/*",
+    "https://*.zoom.us/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Meeting Recorder Satellite"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://meet.google.com/*",
+        "https://teams.microsoft.com/*",
+        "https://teams.cloud.microsoft/*",
+        "https://*.zoom.us/*"
+      ],
+      "js": [
+        "detector.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

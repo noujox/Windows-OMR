@@ -21,6 +21,7 @@ use crate::ipc::{self, SharedStatus, Status};
 use crate::meeting::{self, Manifest};
 use crate::notes::Notes;
 use crate::player::Player;
+use crate::satellite::{Action as SatelliteAction, Satellite};
 use crate::transcribe::{self, Abort, CANCELLED, Event, LANGUAGES};
 use crate::{APP_ID, APP_NAME, settings};
 
@@ -87,6 +88,8 @@ struct Hub {
     /// only hold weak references, so this is what keeps a window's recorder
     /// alive until the window is gone.
     windows: RefCell<Vec<Rc<Recorder>>>,
+    satellite: RefCell<Satellite>,
+    satellite_owner: RefCell<Option<std::rc::Weak<Recorder>>>,
 }
 
 impl Hub {
@@ -96,6 +99,8 @@ impl Hub {
             system: Source::spawn(Input::Computer),
             statuses: ipc::Statuses::default(),
             windows: RefCell::default(),
+            satellite: RefCell::default(),
+            satellite_owner: RefCell::default(),
         });
         let (commands_tx, commands_rx) = async_channel::unbounded();
         ipc::serve(
@@ -124,6 +129,14 @@ impl Hub {
             }
         });
         app.add_action(&new_window);
+
+        // Browser heartbeat watchdog: pause after 18 seconds without news.
+        let weak = Rc::downgrade(&hub);
+        glib::timeout_add_local(std::time::Duration::from_secs(1), move || {
+            let Some(hub) = weak.upgrade() else { return glib::ControlFlow::Break };
+            hub.satellite_tick();
+            glib::ControlFlow::Continue
+        });
 
         // Quitting closes every window; one in the middle of a meeting asks first.
         let quit = gio::SimpleAction::new("quit", None);
@@ -237,10 +250,93 @@ impl Hub {
             .unwrap_or_else(|| self.add_window(app))
     }
 
+    fn satellite_event(self: &Rc<Self>, app: &adw::Application, cmd: &str, session: &str) {
+        if !settings::satellite_enabled() { return; }
+        let busy = self.recording().is_some();
+        let action = self.satellite.borrow_mut().event(cmd, session, busy, std::time::Instant::now());
+        match action {
+            Some(SatelliteAction::Start) => {
+                let r = self.free_window(app);
+                if r.state.get() == State::Done { r.ready(); }
+                r.start();
+                if r.state.get() == State::Recording || r.starting.get() {
+                    *self.satellite_owner.borrow_mut() = Some(Rc::downgrade(&r));
+                    crate::diagnostics::event("satellite", "browser call detected; recording started");
+                } else {
+                    self.satellite.borrow_mut().release();
+                }
+            }
+            Some(SatelliteAction::Pause) => {
+                let owner = self.satellite_owner.borrow().as_ref().and_then(|r| r.upgrade());
+                if let Some(r) = owner.filter(|r| r.state.get() == State::Recording && !r.paused.get()) {
+                    r.toggle_pause();
+                    crate::diagnostics::event("satellite", "browser call left; recording paused");
+                } else {
+                    self.satellite.borrow_mut().release();
+                    *self.satellite_owner.borrow_mut() = None;
+                }
+            }
+            Some(SatelliteAction::Resume) => {
+                let owner = self.satellite_owner.borrow().as_ref().and_then(|r| r.upgrade());
+                if let Some(r) = owner.filter(|r| r.state.get() == State::Recording && r.paused.get()) {
+                    r.toggle_pause();
+                    crate::diagnostics::event("satellite", "browser call rejoined; resumed automatic pause");
+                } else {
+                    self.satellite.borrow_mut().release();
+                    *self.satellite_owner.borrow_mut() = None;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn satellite_tick(&self) {
+        if !settings::satellite_enabled() {
+            self.satellite.borrow_mut().release();
+            *self.satellite_owner.borrow_mut() = None;
+            return;
+        }
+        let owner = self.satellite_owner.borrow().as_ref().and_then(|r| r.upgrade());
+        if self.satellite.borrow().owns_recording()
+            && owner.as_ref().is_none_or(|r| r.state.get() != State::Recording && !r.starting.get())
+        {
+            self.satellite.borrow_mut().release();
+            *self.satellite_owner.borrow_mut() = None;
+            return;
+        }
+        let still_paused = owner.as_ref().is_some_and(|r| r.state.get() == State::Recording && r.paused.get());
+        let action = self.satellite.borrow_mut().tick(std::time::Instant::now(), still_paused);
+        match action {
+            Some(SatelliteAction::Pause) => {
+                if let Some(r) = owner.filter(|r| r.state.get() == State::Recording && !r.paused.get()) {
+                    r.toggle_pause();
+                    crate::diagnostics::event("satellite", "browser heartbeat lost; recording paused");
+                } else {
+                    self.satellite.borrow_mut().release();
+                    *self.satellite_owner.borrow_mut() = None;
+                }
+            }
+            Some(SatelliteAction::Show) => {
+                if let Some(r) = owner.filter(|r| r.state.get() == State::Recording && r.paused.get()) {
+                    r.set_compact(false);
+                    r.window.present();
+                    r.toast("Browser meeting ended. Recording paused; Resume or Stop.");
+                }
+                *self.satellite_owner.borrow_mut() = None;
+                crate::diagnostics::event("satellite", "10-second review prompt shown");
+            }
+            _ => {}
+        }
+    }
+
     /// A command from the socket: `omarchy-meeting-recorder start` and friends.
     /// `title` is what came with it: the name for `start`, the notes file for
     /// `notes`, "" without one.
     fn command(self: &Rc<Self>, app: &adw::Application, command: &str, title: &str) {
+        if matches!(command, "satellite-join" | "satellite-leave" | "satellite-beat") {
+            self.satellite_event(app, command, title);
+            return;
+        }
         if command == "open" {
             self.target(app).window.present();
             return;
@@ -607,6 +703,19 @@ impl Recorder {
         group.add(&format_row);
         group.add(&language_row);
         group.add(&webcam_row);
+        #[cfg(target_os = "windows")]
+        {
+            let satellite_row = adw::SwitchRow::builder()
+                .title("Automatic browser meetings")
+                .subtitle("Meet/Teams/Zoom satellite; pause on leave, never stop automatically.")
+                .active(settings::satellite_enabled())
+                .build();
+            satellite_row.connect_active_notify(|row| {
+                settings::save_satellite_enabled(row.is_active());
+                crate::diagnostics::event("satellite", if row.is_active() { "enabled" } else { "disabled" });
+            });
+            group.add(&satellite_row);
+        }
         content.append(&group);
 
         let frozen: [Frozen; 2] = Default::default();

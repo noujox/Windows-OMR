@@ -102,7 +102,10 @@ pub fn now() -> i64 {
 /// Commands a client may send, one per line. `start` may be followed by a
 /// space and the meeting's name, `notes` by the path of a notes file, and
 /// `name` by a name for the meeting about to be recorded.
-pub const COMMANDS: [&str; 8] = [
+pub const COMMANDS: [&str; 11] = [
+    "satellite-join",
+    "satellite-leave",
+    "satellite-beat",
     "open",
     "name",
     "start",
@@ -221,6 +224,8 @@ fn parse_command(line: &str) -> Option<Command> {
         Some(("start", title)) => ("start", title.trim()),
         Some(("notes", path)) => ("notes", path.trim()),
         Some(("name", title)) => ("name", title.trim()),
+        Some((cmd @ ("satellite-join" | "satellite-leave" | "satellite-beat"), session))
+            if crate::satellite::valid_session(session.trim()) => (cmd, session.trim()),
         _ => (line, ""),
     };
     COMMANDS

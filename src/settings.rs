@@ -152,6 +152,15 @@ pub fn save_minimize_to_tray(enabled: bool) {
     save("minimize_to_tray", if enabled { "yes" } else { "no" });
 }
 
+/// Explicit opt-in. The satellite cannot start recordings by default.
+pub fn satellite_enabled() -> bool {
+    load()["satellite_enabled"].as_str() == Some("yes")
+}
+
+pub fn save_satellite_enabled(enabled: bool) {
+    save("satellite_enabled", if enabled { "yes" } else { "no" });
+}
+
 pub fn start_with_windows() -> bool {
     load()["start_with_windows"].as_str() != Some("no")
 }
