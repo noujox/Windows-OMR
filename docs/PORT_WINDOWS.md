@@ -82,6 +82,14 @@ docker run --rm -v "$PWD:/work" -w /work/tools/windows-audio-check meeting-recor
 
 **Resultado:** comprobación cruzada WASAPI, Named Pipes y dependencias básicas de bandeja correcta; pruebas Linux 67/67. Además, el ejecutable Windows completo ya compiló en TuxTeam. Falta validación funcional en Windows real.
 
+## Hotfix de renombrado consecutivo (24-10-2026)
+
+- Segundo crash confirmado por Windows Event Log a las 00:23:59, `libgobject-2.0-0.dll`, excepción `0xc0000005` y también `0xc000041d`.
+- El log de `%LOCALAPPDATA%\\omarchy-meeting-recorder\\logs\\app.log` registra dos intentos de guardado al editar hablantes: el primero finaliza, el siguiente termina en crash justo después de guardar.
+- Causa probable: el redibujo de transcripción reconstruye las filas `AdwEntryRow` durante eventos Enter/focus-leave; el evento de pérdida de foco vuelve a solicitar guardado.
+- Corrección: entradas **persistentes durante renombrados normales**, con un solo guardado diferido por ciclo de eventos, bloqueo de `focus-leave` mientras se destruyen filas solo para fusionar hablantes o cambiar reunión. Preserva el editor enfocado para secuencias de múltiples renombrados.
+- Cambio aislado en rama `hotfix/gtk-speaker-fields`, sin mezclar desarrollo paralelo de extensión satélite. Pendiente validar con Windows real; ninguna reunión fue modificada.
+
 ## Recuperación de reuniones y logs persistentes (23-10-2026)
 
 - La interfaz anterior solo mostraba **Import audio**, que vuelve a transcribir el contenido: no equivalía a abrir una reunión existente.
