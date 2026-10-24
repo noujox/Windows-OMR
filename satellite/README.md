@@ -1,6 +1,8 @@
-# Meeting Recorder Satellite — Windows + Chrome/Edge
+# Meeting Recorder Satellite — BETA (Windows / Chrome, Edge y Vivaldi)
 
-Estado: versión de desarrollo. **La detección viene desactivada por defecto** en la extensión y en Meeting Recorder.
+**Función exclusiva de este fork de Windows**, no incluida en el proyecto original de Omarchy. Consulta la [guía principal en inglés](../README.md) para conocer su funcionamiento, instalación y uso.
+
+Estado: **BETA experimental**. La detección es heurística y puede fallar cuando cambian las interfaces de Meet, Teams o Zoom. **Viene desactivada por defecto** en la extensión y en Meeting Recorder.
 
 ## Arquitectura
 

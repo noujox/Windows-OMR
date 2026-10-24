@@ -26,15 +26,62 @@ At its heart, it is still Meeting Recorder: **your microphone, the other side of
 
 We have also removed the integrations that made little sense outside Omarchy—such as the Hyprland-specific window rules and the Omarchy bar plugin—while keeping the Rust, GTK4/libadwaita application and the existing meeting format.
 
-### Optional: Meeting Recorder Satellite
+## Exclusive to this fork: Meeting Recorder Satellite 🧪 BETA
 
-The companion browser extension can detect when you enter a supported **web** meeting and ask the running Windows app to start recording. It is **opt-in in both the extension and the app**.
+**A new, optional feature developed for the Windows fork—not part of the original Omarchy project.**
 
-When the call ends, the satellite **pauses** the recording rather than stopping it. After approximately **10 seconds**, Meeting Recorder is brought to the foreground so **you** decide whether to finish or continue. Manually started recordings and manual pauses take priority.
+Ever joined a meeting, started talking, and only remembered to press **Record** halfway through? **Meeting Recorder Satellite** explores a less intrusive approach: a small browser extension that recognizes when you enter a meeting and asks the desktop recorder to start **automatically, only when you have enabled it**.
 
-The extension uses browser **Native Messaging** and a local Windows Named Pipe. It does not capture your audio, video, or chat; the desktop application handles recording. Meeting Recorder must already be running.
+> **BETA — experimental browser automation.** Detection depends on meeting-site interfaces and can fail or trigger at the wrong moment. The feature is disabled by default in **both** the extension and Meeting Recorder. Use the manual recording controls whenever reliability matters, and test with a non-sensitive call first.
 
-See **[Satellite setup and limitations](satellite/README.md)** for supported browsers, installation, and troubleshooting. Always inform participants and follow applicable recording and consent requirements.
+### How it works
+
+```text
+Meet / Teams / Zoom (browser)
+       ↓ detect an active call
+Satellite browser extension
+       ↓ Native Messaging
+Local Windows satellite host
+       ↓ restricted Named Pipe
+Meeting Recorder → Start / Pause / Resume
+```
+
+- **Join a browser meeting:** When Satellite recognizes an active Google Meet, Microsoft Teams (web), or Zoom (web) call, it sends a start request to Meeting Recorder **if both automation switches are on**.
+- **Leave the meeting:** It **pauses** your recording instead of stopping or finalizing it. After about **10 seconds**, the app comes to the foreground and lets you choose whether to stop or continue.
+- **Temporary disconnection:** The extension uses periodic heartbeats and a conservative timeout, so brief reconnects do not immediately end your recording.
+- **You stay in control:** Manual recordings and manual pauses take precedence. Satellite never ends a recording on its own.
+
+Satellite **does not record browser audio or video itself**, read the meeting chat, or invite a bot to your call. It only looks for visible indicators of an active meeting and sends local control messages; the Windows application handles the actual capture. It does **not** launch Meeting Recorder, so the app must be running (it may be minimized to the tray).
+
+### Install the Satellite extension (Windows)
+
+**You need:** a Windows build of this fork with Satellite support, the `satellite` package containing `extension/`, `windows/install.ps1`, and `meeting-recorder-satellite-host.exe`, plus a Chromium-based browser (Chrome, Edge, or Vivaldi).
+
+1. **Extract the Satellite package into a permanent folder.** Keep the native host executable and `windows/` installer alongside the `extension/` folder. Do not move the package after registration without reinstalling the host.
+2. **Load the browser extension:** open `chrome://extensions`, `edge://extensions`, or `vivaldi://extensions`; enable **Developer mode**, select **Load unpacked / Cargar descomprimida**, and choose the **`extension/` subfolder** (the one containing `manifest.json`, **not** the package root).
+3. **Copy your extension ID** from the browser's extensions page (32 lowercase letters). Each browser may assign a different ID.
+4. **Register Native Messaging:** open PowerShell **in the extracted Satellite package folder** and run the command below, replacing the placeholder with the ID from step 3. The example is for **Edge**:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File ".\windows\install.ps1" -ExtensionId YOUR_32_CHARACTER_EXTENSION_ID -Browser Edge
+   ```
+
+   Change `-Browser Edge` to `Chrome` or `Vivaldi` for your browser. `Both` registers the Chrome and Edge registry locations, and `All` registers all three; however, the current installer authorizes **one extension ID per installation**, so use the specific browser option when IDs differ. No administrator privileges are required.
+5. **Reload the extension** from your browser's extensions page (or restart the browser). You **do not run** `meeting-recorder-satellite-host.exe` manually: the browser launches it through Native Messaging when needed.
+
+The installer only registers a per-user Windows host manifest. It does **not** install or launch the desktop app, open network ports, or start a recording. If you are building from source instead of using a prepared Satellite package, you must also compile the `meeting-recorder-satellite-host` binary and include it at the package root. See the [Satellite technical notes](satellite/README.md) for its architecture and files.
+
+### How to use it
+
+1. Open **Meeting Recorder** and enable **Automatic browser meetings** in its settings.
+2. Open the **Meeting Recorder Satellite** browser popup and turn on **Automatic detection / Detección automática**.
+3. Join a supported meeting **in a browser tab**. The extension will attempt to detect an active call and ask the running app to record; confirm recording actually started by checking Meeting Recorder's own timer and meters.
+4. When you leave, Satellite pauses the recording. Review it in Meeting Recorder and choose **Stop** to finish/transcribe or **Resume** to continue.
+5. If the meeting was already active before you enabled automation, the popup provides **Reenviar inicio de reunión / Resend meeting start**. Click it **only when you want to start recording**, as it may trigger a new recording.
+
+The popup's **host connected** status means the browser can reach the native host—it **does not guarantee recording has started**. If something goes wrong, check `%LOCALAPPDATA%\omarchy-meeting-recorder\logs\app.log` and see [Satellite troubleshooting and known limitations](satellite/README.md).
+
+**BETA limitations:** Meet/Teams/Zoom may change their UI and break detection; desktop meeting applications are not supported; multi-browser setups with distinct extension IDs need extra care; and unexpected disconnects or reconnects may require manual intervention. Please obtain any necessary participant consent and follow applicable recording laws.
 
 ## Getting started on Windows
 
