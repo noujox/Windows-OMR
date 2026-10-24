@@ -64,18 +64,9 @@ pub fn serve(
                     continue;
                 }
             };
-            // The send-side socket must never stall the broadcaster.
-            if stream
-                .set_send_timeout(Some(Duration::from_millis(20)))
-                .is_err()
-            {
-                continue;
+            if let Err(err) = attach_client(stream, &connected, &commands) {
+                crate::diagnostics::event("ipc.error", &format!("unable to attach client pipe: {err}"));
             }
-            if let Ok(reader) = stream.try_clone() {
-                let commands = commands.clone();
-                thread::spawn(move || read_commands(reader, &commands));
-            }
-            connected.lock().unwrap().push(stream);
         }
     });
 
@@ -115,6 +106,22 @@ pub fn serve(
             }));
         }
     });
+}
+
+/// Register a client without configuring an unsupported Windows timeout.
+/// In interprocess 2.4.x, named-pipe set_send_timeout always returns an
+/// unsupported-operation error. The former server dropped all clients here.
+fn attach_client(
+    stream: Stream,
+    clients: &Arc<Mutex<Vec<Stream>>>,
+    commands: &async_channel::Sender<Command>,
+) -> io::Result<()> {
+    let reader = stream.try_clone()?;
+    crate::diagnostics::event("ipc", "client connected");
+    let commands = commands.clone();
+    thread::spawn(move || read_commands(reader, &commands));
+    clients.lock().unwrap().push(stream);
+    Ok(())
 }
 
 fn read_commands(mut stream: Stream, commands: &async_channel::Sender<Command>) {
@@ -215,5 +222,41 @@ pub fn watch() {
             return;
         }
         thread::sleep(Duration::from_secs(1));
+    }
+}
+
+#[cfg(test)]
+mod windows_pipe_tests {
+    use super::*;
+
+    #[test]
+    fn incoming_named_pipe_commands_are_not_dropped() {
+        // Isolated pipe, distinct from the user's running recorder. Regression:
+        // on Windows, setting send timeout before attaching a reader failed
+        // with Unsupported and silently discarded every connection.
+        let pipe = format!("meeting-recorder-ipc-test-{}", std::process::id());
+        let listener = ListenerOptions::new()
+            .name(pipe.as_str().to_ns_name::<GenericNamespaced>().unwrap())
+            .create_sync()
+            .unwrap();
+        let client = thread::spawn(move || {
+            let mut socket =
+                Stream::connect(pipe.as_str().to_ns_name::<GenericNamespaced>().unwrap()).unwrap();
+            socket
+                .write_all(b"satellite-beat meet.diagnostic_12345678\n")
+                .unwrap();
+        });
+        let stream = listener.incoming().next().unwrap().unwrap();
+        let (commands_tx, commands_rx) = async_channel::unbounded();
+        let clients = Arc::new(Mutex::new(Vec::new()));
+        attach_client(stream, &clients, &commands_tx).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let _ = tx.send(commands_rx.recv_blocking().ok());
+        });
+        let event = rx.recv_timeout(Duration::from_secs(4)).unwrap().unwrap();
+        assert_eq!(event.0, "satellite-beat");
+        assert_eq!(event.1, "meet.diagnostic_12345678");
+        client.join().unwrap();
     }
 }
