@@ -36,7 +36,9 @@
   };
   function qualifyingLocation() {
     if (provider === "meet") {
-      return /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}(?:\/|$)/i.test(location.pathname);
+      // Current Meet also uses /meet/<code>, not only /<code>.
+      // Do not activate from the Meet home/lobby page by URL alone.
+      return /^\/(?:meet\/)?[a-z]{3}-[a-z]{4}-[a-z]{3}(?:\/|$)/i.test(location.pathname);
     }
     if (provider === "zoom") {
       return /\/(?:wc|j|s)\/|\/meeting\/|\/w\/|\/webinar\//i.test(location.pathname)

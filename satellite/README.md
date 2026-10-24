@@ -24,7 +24,7 @@ El instalador crea solamente claves de usuario HKCU, nunca requiere permisos de 
 
 ## Limitaciones de esta primera versión
 
-- Los detectores DOM son **heurísticos**, sensibles a cambios de idioma e interfaz. La extensión puede no detectar algunas reuniones. El control manual de la app siempre sigue disponible.
+- Los detectores DOM son **heurísticos**, sensibles a cambios de idioma e interfaz. La extensión puede no detectar algunas reuniones. El detector de Meet admite rutas `/codigo` y `/meet/codigo`, pero requiere que esté visible el botón de salir de la llamada. El popup diferencia entre falta de detección y error de enlace nativo. El control manual de la app siempre sigue disponible.
 - Este paquete **no funciona con la versión anterior** de Meeting Recorder: necesita el binario que incluya los nuevos comandos.
 - Si Meeting Recorder no está abierto, la extensión no inicia el programa.
 - Nunca finaliza grabaciones automáticamente.
