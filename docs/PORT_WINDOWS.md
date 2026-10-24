@@ -1,6 +1,6 @@
-# Port de Meeting Recorder a Windows (en desarrollo)
+# Port de Meeting Recorder a Windows — bitácora de desarrollo
 
-> Rama de trabajo: `port/windows-native`. Base: upstream `5d098eb`. No es todavía una versión Windows compilable.
+> Rama de trabajo: `port/windows-native`. Base inicial: upstream `5d098eb`. **El ejecutable Windows ya compila y se utiliza como preview**; este documento conserva decisiones y listas de tareas históricas, por lo que algunas frases de etapas tempranas ya no representan el estado actual. Los hitos más recientes aparecen en las secciones fechadas de abajo.
 
 ## Alcance decidido
 

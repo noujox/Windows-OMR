@@ -1,8 +1,87 @@
-# Meeting Recorder — Windows port (work in progress)
+# Meeting Recorder for Windows
 
-**This branch is under active development and cannot yet run on Windows.** The Omarchy plugin and Arch packaging described below have been removed from this branch. See [Windows port progress and engineering plan](docs/PORT_WINDOWS.md). The original README below is retained for technical context; its installation instructions apply to the upstream Linux version only.
+**An unofficial Windows port of [jankeesvw/omarchy-meeting-recorder](https://github.com/jankeesvw/omarchy-meeting-recorder).**
+
+The original [Meeting Recorder](https://github.com/jankeesvw/omarchy-meeting-recorder) is a beautifully simple meeting recorder built for [Omarchy](https://omarchy.org) on Linux: record both sides of a conversation, transcribe it locally, and revisit the result in an editable, searchable transcript.
+
+**This fork brings that experience to Windows.** The goal is not to reinvent the recorder, but to keep what makes it useful—its interface, local-first approach, and meeting workflow—while replacing its Linux-specific plumbing with native Windows integrations.
+
+> **Project status: Windows preview / active development.** The Windows application builds and has been tested on a Windows machine, but this is not yet a polished, signed release. Some hardware-dependent features and edge cases still need validation. This fork is maintained independently from the original project.
+
+![Original Meeting Recorder interface on Omarchy (reference screenshot; Windows appearance may differ)](screenshots/hero.webp)
+
+## What works in this port
+
+At its heart, it is still Meeting Recorder: **your microphone, the other side of the call, and a transcript you control**—without a meeting bot joining the call.
+
+| Area | Windows port |
+| --- | --- |
+| **Audio capture** | Native **WASAPI** recording from the default microphone, plus **WASAPI loopback** for the computer's default playback device. Both sides are kept as separate tracks. |
+| **Local transcription** | **Whisper / whisper.cpp** through `whisper-rs`; the current Windows preview is built with a CPU baseline. Models are downloaded when needed. |
+| **Transcripts & playback** | Keep the original editing, speaker naming, waveform playback, imports, and saved-meeting workflow. |
+| **Desktop integration** | Windows notification-area icon, minimize-to-tray support, and optional automatic startup with Windows. |
+| **Windows internals** | Native **Named Pipes** for local control, Windows audio playback, and webcam capture through FFmpeg/DirectShow. |
+| **Troubleshooting** | Persistent application logs, recovery of saved meetings, and fixes for Windows-specific GTK and IPC issues. |
+| **Browser automation** | An **optional** satellite extension for browser-based Google Meet, Microsoft Teams, and Zoom. |
+
+We have also removed the integrations that made little sense outside Omarchy—such as the Hyprland-specific window rules and the Omarchy bar plugin—while keeping the Rust, GTK4/libadwaita application and the existing meeting format.
+
+### Optional: Meeting Recorder Satellite
+
+The companion browser extension can detect when you enter a supported **web** meeting and ask the running Windows app to start recording. It is **opt-in in both the extension and the app**.
+
+When the call ends, the satellite **pauses** the recording rather than stopping it. After approximately **10 seconds**, Meeting Recorder is brought to the foreground so **you** decide whether to finish or continue. Manually started recordings and manual pauses take priority.
+
+The extension uses browser **Native Messaging** and a local Windows Named Pipe. It does not capture your audio, video, or chat; the desktop application handles recording. Meeting Recorder must already be running.
+
+See **[Satellite setup and limitations](satellite/README.md)** for supported browsers, installation, and troubleshooting. Always inform participants and follow applicable recording and consent requirements.
+
+## Getting started on Windows
+
+**This is currently a developer/preview project, not a one-click Windows installer.** No official Windows release download is provided here yet.
+
+If you have a packaged preview build:
+
+1. Extract the **entire** package to a folder; keep its DLLs, FFmpeg and application resources together.
+2. Start it using **`Start Meeting Recorder.cmd`** from that folder.
+3. Check the microphone and computer-audio meters, then record or import audio as needed.
+4. Install the satellite **only if you want** automatic detection of browser meetings.
+
+To build from source, use **MSYS2 UCRT64** on Windows with the GTK4/libadwaita development libraries, Rust GNU toolchain, CMake/Ninja, Clang and the relevant multimedia dependencies:
+
+```bash
+bash scripts/build-windows-msys2.sh
+```
+
+The build script produces a Windows executable; **the executable alone is not a portable distribution**. The GTK and multimedia runtime DLLs must be packaged as well. See the [Windows build workflow](.github/workflows/windows-ci.yml), [preview packager](scripts/package-windows-preview.py), and [technical port notes](docs/PORT_WINDOWS.md) for details.
+
+## What is still being worked on
+
+- Making installation and distribution simpler, with reproducible Windows releases.
+- Verifying audio-device changes, webcam behavior, tray integration and different hardware configurations.
+- Improving GPU-accelerated transcription on Windows; CPU operation is the current baseline.
+- Restoring optional agent-generated chapters **only** when a safe Windows execution model is available. This integration is deliberately disabled for now.
+- Refining browser-meeting detection, Native Messaging and reconnection handling across supported browsers.
+
+The project is evolving, so expect rough edges and please treat preview builds accordingly.
+
+## Why a fork?
+
+This work exists because the original recorder is worth bringing to another platform—not because it needs replacing. The aim is to offer Windows users the same thoughtful, privacy-conscious workflow while allowing Windows-specific changes to develop at their own pace.
+
+**All credit for the original project and its design goes to [Jankees van Woezik](https://github.com/jankeesvw) and the upstream contributors.** This is a community-maintained, **unofficial** port, not an upstream Windows release or an affiliation with the original maintainer.
+
+- **Original project:** [jankeesvw/omarchy-meeting-recorder](https://github.com/jankeesvw/omarchy-meeting-recorder)
+- **This Windows fork:** [noujox/omarchy-meeting-recorder](https://github.com/noujox/omarchy-meeting-recorder)
+- **Windows development notes:** [docs/PORT_WINDOWS.md](docs/PORT_WINDOWS.md)
+- **License:** [MIT](LICENSE), retaining the original copyright notice
+
+The original Linux/Omarchy documentation is preserved below for reference. **Its Arch/Omarchy installation commands do not install this Windows port.**
 
 ---
+
+<details>
+<summary><strong>Original upstream README — Linux / Omarchy reference</strong></summary>
 
 # Original upstream README
 
@@ -316,3 +395,5 @@ The meetings in the screenshots and clips are invented and were voiced with [pip
 ## License
 
 MIT
+
+</details>
