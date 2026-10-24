@@ -1,10 +1,10 @@
 param(
     [Parameter(Mandatory=$true)][string]$ExtensionId,
-    [ValidateSet('Chrome','Edge','Both')][string]$Browser = 'Both'
+    [ValidateSet('Chrome','Edge','Vivaldi','Both','All')][string]$Browser = 'Both'
 )
 $ErrorActionPreference = 'Stop'
 if ($ExtensionId -cnotmatch '^[a-p]{32}$') {
-    throw 'ExtensionId must be the 32-character ID shown in chrome://extensions or edge://extensions.'
+    throw 'ExtensionId must be the 32-character ID shown in the browser extension management page (e.g. vivaldi://extensions).'
 }
 $hostName = 'com.computux.meeting_recorder_satellite'
 $folder = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -22,13 +22,18 @@ $manifest = Join-Path $folder "$hostName.json"
 # generally accepts BOMs, but generate canonical UTF8 *without* BOM.
 $json = Get-Content -Raw -LiteralPath $manifest
 [System.IO.File]::WriteAllText($manifest, $json, (New-Object System.Text.UTF8Encoding($false)))
-if ($Browser -in @('Chrome','Both')) {
+if ($Browser -in @('Chrome','Both','All')) {
     $path = "HKCU:\Software\Google\Chrome\NativeMessagingHosts\$hostName"
     New-Item $path -Force | Out-Null
     Set-Item -Path $path -Value $manifest
 }
-if ($Browser -in @('Edge','Both')) {
+if ($Browser -in @('Edge','Both','All')) {
     $path = "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\$hostName"
+    New-Item $path -Force | Out-Null
+    Set-Item -Path $path -Value $manifest
+}
+if ($Browser -in @('Vivaldi','All')) {
+    $path = "HKCU:\Software\Vivaldi\NativeMessagingHosts\$hostName"
     New-Item $path -Force | Out-Null
     Set-Item -Path $path -Value $manifest
 }

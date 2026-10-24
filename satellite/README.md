@@ -17,7 +17,7 @@ Estado: versión de desarrollo. **La detección viene desactivada por defecto** 
 2. Extraer el paquete satélite en una carpeta permanente (no mover posteriormente).
 3. Abrir `chrome://extensions` o `edge://extensions`. Activar *Developer mode* y **Load unpacked** seleccionando la carpeta `extension` del paquete.
 4. Copiar el ID de 32 caracteres de la extensión recién cargada.
-5. En PowerShell ejecutar desde la raíz extraída: `powershell -ExecutionPolicy Bypass -File .\windows\install.ps1 -ExtensionId ID_COPIADO -Browser Chrome` (usar Edge o Both según corresponda).
+5. En PowerShell ejecutar desde la raíz extraída: `powershell -ExecutionPolicy Bypass -File .\windows\install.ps1 -ExtensionId ID_COPIADO -Browser Vivaldi` si utilizas Vivaldi. Para Chrome o Edge, elegir `-Browser Chrome`, `Edge` o `Both`; `All` registra los tres. El ID se obtiene desde `vivaldi://extensions` (o `chrome://extensions`).
 6. Reiniciar el navegador o deshabilitar/habilitar la extensión. Activar el interruptor en el popup y **Automatic browser meetings** dentro de Meeting Recorder. Ambos deben estar activos.
 
 El instalador crea solamente claves de usuario HKCU, nunca requiere permisos de administrador. Es imprescindible registrar el ID exacto de la extensión mediante `allowed_origins`. No se abren puertos de red.
