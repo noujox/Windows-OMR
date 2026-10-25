@@ -1,4 +1,4 @@
-# Meeting Recorder Satellite — BETA (Windows / Chrome, Edge y Vivaldi)
+# Meeting Recorder Satellite — BETA (Windows / Chrome, Edge)
 
 **Función exclusiva de este fork de Windows**, no incluida en el proyecto original de Omarchy. Consulta la [guía principal en inglés](../README.md) para conocer su funcionamiento, instalación y uso.
 
