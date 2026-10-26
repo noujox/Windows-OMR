@@ -52,6 +52,8 @@ struct Inner {
     recording: Option<Recording>,
     /// While paused the meters keep running but nothing is written.
     paused: bool,
+    /// Digital gate for only the microphone track; raw WASAPI capture continues.
+    satellite_muted: bool,
 }
 
 struct Recording {
@@ -72,6 +74,7 @@ impl Source {
             levels: VecDeque::from(vec![0.0; HISTORY]),
             recording: None,
             paused: false,
+            satellite_muted: false,
         }));
         let shared = inner.clone();
         thread::spawn(move || {
@@ -107,6 +110,16 @@ impl Source {
         Ok(())
     }
 
+    /// Replace microphone PCM with zeros while preserving exact frame count.
+    /// The OS microphone is never toggled; metering remains based on raw input.
+    pub fn set_satellite_muted(&self, muted: bool) {
+        self.inner.lock().unwrap().satellite_muted = muted;
+    }
+
+    pub fn satellite_muted(&self) -> bool {
+        self.inner.lock().unwrap().satellite_muted
+    }
+
     pub fn set_paused(&self, paused: bool) {
         let mut inner = self.inner.lock().unwrap();
         inner.paused = paused;
@@ -116,7 +129,9 @@ impl Source {
     }
 
     pub fn stop_recording(&self) {
-        if let Some(mut recording) = self.inner.lock().unwrap().recording.take() {
+        let mut inner = self.inner.lock().unwrap();
+        inner.satellite_muted = false;
+        if let Some(mut recording) = inner.recording.take() {
             // WASAPI loopback may produce no packets at all when output is silent.
             // Always finish the track at its wall-clock duration so exports
             // preserve alignment, including a fully silent computer track.
@@ -198,6 +213,7 @@ fn ingest_chunk(
     let inner = &mut *guard;
     inner.levels.pop_front();
     inner.levels.push_back(peak);
+    let muted = inner.satellite_muted;
     if let Some(Recording { file, timeline }) = inner.recording.as_mut() {
         timeline.heard(waited, first);
         if inner.paused {
@@ -206,7 +222,11 @@ fn ingest_chunk(
         let missing = timeline.missing_before(now);
         let _ = write_silence(file, missing);
         timeline.wrote(missing + (CHUNK_BYTES / FRAME_BYTES) as u64);
-        let _ = file.write_all(chunk);
+        if muted {
+            let _ = write_silence(file, (CHUNK_BYTES / FRAME_BYTES) as u64);
+        } else {
+            let _ = file.write_all(chunk);
+        }
         if count.is_multiple_of(50) {
             let _ = file.flush();
         }
@@ -336,6 +356,35 @@ mod tests {
         let missing = timeline.missing_before(at);
         timeline.wrote(missing + CHUNK_FRAMES);
         missing
+    }
+
+    #[test]
+    fn smart_mic_writes_zero_pcm_without_pausing_or_affecting_timeline() {
+        let id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir().join(format!("omr-smart-mic-{}-{id}.raw", std::process::id()));
+        let shared = Arc::new(Mutex::new(Inner {
+            levels: VecDeque::from(vec![0.0; HISTORY]),
+            recording: None,
+            paused: false,
+            satellite_muted: false,
+        }));
+        let source = Source { inner: shared.clone() };
+        source.start_recording(&path).unwrap();
+        let sound = [0x55u8; CHUNK_BYTES];
+        ingest_chunk(&shared, &sound, Duration::from_millis(20), false, 1);
+        source.set_satellite_muted(true);
+        ingest_chunk(&shared, &sound, Duration::from_millis(20), false, 2);
+        source.set_satellite_muted(false);
+        ingest_chunk(&shared, &sound, Duration::from_millis(20), false, 3);
+        source.stop_recording();
+        let bytes = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(path);
+        assert!(bytes.len() >= 3 * CHUNK_BYTES);
+        assert_eq!(&bytes[..CHUNK_BYTES], &sound);
+        assert!(bytes[CHUNK_BYTES..2 * CHUNK_BYTES].iter().all(|&byte| byte == 0));
+        assert_eq!(&bytes[2 * CHUNK_BYTES..3 * CHUNK_BYTES], &sound);
+        assert!(!source.satellite_muted());
     }
 
     #[test]

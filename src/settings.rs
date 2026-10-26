@@ -161,6 +161,14 @@ pub fn save_satellite_enabled(enabled: bool) {
     save("satellite_enabled", if enabled { "yes" } else { "no" });
 }
 
+/// Smart Mic Sync is experimental and requires its own explicit opt-in.
+pub fn smart_mic_sync() -> bool {
+    load()["smart_mic_sync"].as_str() == Some("yes")
+}
+pub fn save_smart_mic_sync(enabled: bool) {
+    save("smart_mic_sync", if enabled { "yes" } else { "no" });
+}
+
 pub fn start_with_windows() -> bool {
     load()["start_with_windows"].as_str() != Some("no")
 }

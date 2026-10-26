@@ -16,14 +16,14 @@ function providerFor(url) {
 function validSession(session, provider) {
   return typeof session === "string" && new RegExp("^" + provider + "\\.[A-Za-z0-9_-]{8,64}$").test(session);
 }
-async function forward(event, session) {
+async function forward(event, session, mic = "unknown") {
   try {
-    const response = await chrome.runtime.sendNativeMessage(HOST, {event, session});
+    const response = await chrome.runtime.sendNativeMessage(HOST, {event, session, mic});
     const connected = response?.connected === true;
-    await chrome.storage.session.set({connected, lastEvent: event, lastChecked: Date.now()});
+    await chrome.storage.session.set({connected, lastEvent: event, lastMic: mic, lastChecked: Date.now()});
     return connected;
   } catch (err) {
-    await chrome.storage.session.set({connected: false, lastEvent: event, lastChecked: Date.now()});
+    await chrome.storage.session.set({connected: false, lastEvent: event, lastMic: mic, lastChecked: Date.now()});
     console.warn("Meeting Recorder native host:", err?.message || err);
     return false;
   }
@@ -39,6 +39,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // many shipped Chromium versions and may cancel the native-message relay.
   (async () => {
     const enabled = (await chrome.storage.local.get({enabled: false})).enabled === true;
+    // Never allow arbitrary strings into native commands. Unknown is safer
+    // than mistaking an unsupported/changed browser UI for an unmuted mic.
+    const mic = ["muted", "live", "unknown"].includes(msg.mic) ? msg.mic : "unknown";
     const previous = sessions.get(tabId);
     if (msg.event === "leave") {
       if (previous === msg.session) {
@@ -55,7 +58,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // If the browser service worker was restarted (or the app was not open),
     // promote the next heartbeat to a join. No restart of the recorder.
     const event = sessions.get(tabId) === msg.session ? msg.event : "join";
-    const ok = await forward(event, msg.session);
+    const ok = await forward(event, msg.session, mic);
     if (ok) sessions.set(tabId, msg.session);
     else sessions.delete(tabId);
     return {enabled: true, ok};

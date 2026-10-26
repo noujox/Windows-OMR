@@ -13,6 +13,16 @@ Estado: **BETA experimental**. La detección es heurística y puede fallar cuand
 - Si se pierde contacto con la pestaña, el watchdog pausa de forma conservadora después de 75 segundos sin latidos. Transcurridos 10 segundos desde la pausa se trae Meeting Recorder al frente para que el usuario elija Stop o Resume.
 - Si se reconecta **antes** de finalizar el plazo, se reanuda solo una pausa causada por el satélite. La pausa manual tiene prioridad.
 
+## Smart Mic Sync (BETA): silencio selectivo de tu pista
+
+- Una función **exclusiva de este fork**: al mutear el micrófono en la reunión web, se escriben **ceros PCM en la pista local del micrófono**; el audio del computador (el resto de los participantes) continúa grabándose y conserva su sincronización.
+- Al volver a activar el micrófono en Meet/Teams web/Zoom web, la extensión solicita reanudar solo la pista local. Requiere que la interfaz muestre **dos observaciones consecutivas** de micrófono activo.
+- Es **opt-in independiente**: habilitar **Smart Mic Sync (BETA)** en Meeting Recorder. Requiere además tener activados los interruptores del satélite y la app. Por defecto viene desactivado.
+- Solo afecta las **grabaciones iniciadas por Satellite**; no altera grabaciones manuales, dispositivos de Windows, el micrófono de la videollamada ni la pista remota.
+- Si el botón no se reconoce, desaparece o la UI resulta ambigua, se guarda silencio en el micrófono local mientras Smart Mic Sync esté activo. Las etiquetas de interfaz pueden cambiar con nuevas versiones de Meet/Teams/Zoom: funcionalidad **BETA no garantizada**.
+- **No es retroactivo:** el audio guardado antes de detectar un mute seguirá en el archivo. Los medidores pueden mostrar la señal física aunque la pista guardada esté digitalmente silenciada.
+- El popup muestra `Micrófono detectado: activo/silenciado/desconocido`. Este dato representa la lectura del navegador, no una confirmación de la grabación efectiva.
+
 ## Instalación en Windows (sin Chrome Web Store)
 
 1. Usar una versión de Meeting Recorder compilada con la integración satélite. Dejar abierta la aplicación, aunque esté en bandeja.

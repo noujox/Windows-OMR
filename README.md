@@ -53,6 +53,14 @@ Meeting Recorder → Start / Pause / Resume
 
 Satellite **does not record browser audio or video itself**, read the meeting chat, or invite a bot to your call. It only looks for visible indicators of an active meeting and sends local control messages; the Windows application handles the actual capture. It does **not** launch Meeting Recorder, so the app must be running (it may be minimized to the tray).
 
+### Smart Mic Sync (BETA) — only your microphone track
+
+A second **exclusive Satellite feature** mirrors the browser's microphone mute state into the **saved local microphone track**. If you mute yourself in Meet (or a supported Teams/Zoom web interface), Meeting Recorder writes **digital silence only to your microphone track** while **continuing to record the other participants**. When the extension positively detects that you have unmuted, your microphone audio is saved again. The track duration and synchronization stay intact.
+
+To try it, enable **Smart Mic Sync (BETA)** inside Meeting Recorder, in addition to **Automatic browser meetings** and the Satellite extension's automatic detection switch. This is a separate, **off-by-default** setting. The feature only affects **Satellite-owned automatic recordings**; manually started recordings are unchanged.
+
+**Privacy and reliability:** this is *not* an operating-system hardware mute. It changes what gets saved to the recording, without modifying your microphone in Windows or the meeting itself. The extension uses accessible labels on browser meeting controls, never microphone audio. If the mic state is missing or ambiguous, **Smart Mic Sync keeps the local microphone track silent**, and requires repeated positive detection before saving your voice again. The extension popup shows the detected state, but it does not prove what the app has recorded. Muting starts only after the extension detects the change; **audio already saved cannot be retroactively removed**. Different interface languages, browser layouts, and UI updates may cause missed or delayed detection—test with non-sensitive recordings first.
+
 ### Install the Satellite extension (Windows)
 
 **You need:** a Windows build of this fork with Satellite support, the `satellite` package containing `extension/`, `windows/install.ps1`, and `meeting-recorder-satellite-host.exe`, plus a Chromium-based browser (Chrome, Edge, or Vivaldi).

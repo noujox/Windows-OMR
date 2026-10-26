@@ -1,6 +1,7 @@
 const toggle = document.querySelector("#enabled");
 const status = document.querySelector("#status");
 const connection = document.querySelector("#connection");
+const micStatus = document.querySelector("#mic-status");
 const id = document.querySelector("#extension-id");
 id.textContent = chrome.runtime.id;
 
@@ -10,9 +11,12 @@ function update(enabled) {
     : "Detección desactivada. No se iniciará ninguna grabación.";
 }
 async function showConnection() {
-  const {connected, lastChecked, lastEvent} = await chrome.storage.session.get({
-    connected: null, lastChecked: null, lastEvent: null
+  const {connected, lastChecked, lastEvent, lastMic} = await chrome.storage.session.get({
+    connected: null, lastChecked: null, lastEvent: null, lastMic: null
   });
+  micStatus.textContent = !lastChecked || Date.now() - lastChecked > 120_000
+    ? "Micrófono de la reunión: sin detectar. Smart Mic Sync (BETA)."
+    : `Micrófono detectado: ${lastMic === "muted" ? "silenciado" : lastMic === "live" ? "activo" : "desconocido"}. La pista local solo cambia con Smart Mic Sync activado (BETA).`;
   if (!lastChecked || Date.now() - lastChecked > 120_000) {
     connection.textContent = "Enlace: esperando detectar una reunión activa.";
   } else if (connected) {

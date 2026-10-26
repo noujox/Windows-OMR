@@ -14,6 +14,57 @@
   let positives = 0;
   let negatives = 0;
   let lastBeat = 0;
+  let lastMic = "unknown";
+  let liveSamples = 0;
+  // We trust explicit button labels, not icons, clicks, or arbitrary page text.
+  // Unknown stays muted if Smart Mic Sync is enabled in the desktop app.
+  const micMuted = [
+    /\b(?:turn|switch) (?:the )?microphone on\b/i, /\bturn on (?:the )?microphone\b/i,
+    /\bunmute\b/i, /\bmicrophone (?:is )?(?:off|muted)\b/i,
+    /\bmic (?:is )?(?:off|muted)\b/i,
+    /\b(?:activar|encender|habilitar) (?:el )?micr[oó]fono\b/i,
+    /\bmicr[oó]fono (?:apagado|silenciado|desactivado)\b/i,
+    /\b(?:reativar|reabrir) (?:o )?microfone\b/i,
+  ];
+  const micLive = [
+    /\bturn (?:the )?microphone off\b/i, /\bturn off (?:the )?microphone\b/i,
+    /\bmute (?:my )?(?:microphone|mic|audio)\b/i,
+    /^mute$/i, /\bmicrophone (?:is )?on\b/i,
+    /\bmic (?:is )?on\b/i,
+    /\b(?:silenciar|desactivar|apagar) (?:el )?micr[oó]fono\b/i,
+    /\bmicr[oó]fono activado\b/i,
+    /^silenciar$/i,
+    /\bsilenciar microfone\b/i,
+  ];
+  function readMic() {
+    let found = null;
+    for (const el of document.querySelectorAll("button,[role=\"button\"]")) {
+      if (!el.getClientRects().length || el.disabled || el.getAttribute("aria-hidden") === "true") continue;
+      const label = [
+        el.getAttribute("aria-label"), el.getAttribute("title"),
+        el.getAttribute("data-tooltip-content"), el.getAttribute("data-testid"),
+      ].filter(Boolean).join(" ").trim().slice(0, 180);
+      if (!label) continue;
+      const muted = micMuted.some(re => re.test(label));
+      const live = micLive.some(re => re.test(label));
+      if (muted && live) return "unknown";
+      if (!muted && !live) continue;
+      const state = muted ? "muted" : "live";
+      if (found && found !== state) return "unknown";
+      found = state;
+    }
+    return found || "unknown";
+  }
+  function confirmedMic() {
+    const observed = readMic();
+    if (observed !== "live") {
+      liveSamples = 0;
+      return observed;
+    }
+    // Require two successive observations to re-enable the local mic track.
+    liveSamples = Math.min(liveSamples + 1, 2);
+    return liveSamples >= 2 ? "live" : "unknown";
+  }
 
   const words = {
     meet: [
@@ -61,23 +112,29 @@
     }
     return false;
   }
-  function notify(event) {
-    chrome.runtime.sendMessage({ type: "satellite", event, session }).catch(() => {});
+  function notify(event, mic = "unknown") {
+    chrome.runtime.sendMessage({ type: "satellite", event, session, mic }).catch(() => {});
   }
   function probe() {
     const present = hasLeaveControl();
+    const mic = present ? confirmedMic() : "unknown";
     positives = present ? Math.min(positives + 1, 3) : 0;
     negatives = !present ? Math.min(negatives + 1, 3) : 0;
     if (!active && positives >= 2) {
       active = true;
+      lastMic = mic;
       lastBeat = Date.now();
-      notify("join");
+      notify("join", mic);
     } else if (active && negatives >= 2) {
       active = false;
+      lastMic = "unknown";
+      liveSamples = 0;
       notify("leave");
-    } else if (active && Date.now() - lastBeat > 5000) {
+    } else if (active && (mic !== lastMic || Date.now() - lastBeat > 5000)) {
+      // React quickly to mute; do not wait five seconds for the heartbeat.
+      lastMic = mic;
       lastBeat = Date.now();
-      notify("beat");
+      notify("beat", mic);
     }
   }
   let pending = false;
@@ -87,14 +144,14 @@
     setTimeout(() => { pending = false; probe(); }, 500);
   });
   observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true,
-    attributeFilter: ["aria-label", "title", "data-tid", "class", "hidden"] });
+    attributeFilter: ["aria-label", "title", "data-tid", "data-testid", "data-tooltip-content", "class", "hidden", "aria-pressed"] });
   setInterval(probe, 2000);
   // Explicit opt-in retry from the popup. Never send a join just because the
   // native host connected: this requires the user's click and a live call.
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type !== "satellite-retry") return false;
     const live = active && hasLeaveControl();
-    if (live) notify("join");
+    if (live) notify("join", confirmedMic());
     sendResponse({active: live});
     return false;
   });

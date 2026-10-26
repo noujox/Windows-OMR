@@ -250,13 +250,26 @@ impl Hub {
             .unwrap_or_else(|| self.add_window(app))
     }
 
+    fn refresh_smart_mic(&self) {
+        let satellite = self.satellite.borrow();
+        let muted = settings::satellite_enabled()
+            && settings::smart_mic_sync()
+            && satellite.owns_recording()
+            && satellite.microphone_should_be_muted()
+            && self.satellite_owner.borrow().as_ref().and_then(|r| r.upgrade()).is_some();
+        if self.mic.satellite_muted() != muted {
+            self.mic.set_satellite_muted(muted);
+            crate::diagnostics::event("satellite.smart_mic", if muted { "mic track muted" } else { "mic track live" });
+        }
+    }
+
     fn satellite_event(self: &Rc<Self>, app: &adw::Application, cmd: &str, session: &str) {
         let enabled = settings::satellite_enabled();
         // Log the command type, not the browser's session identifier.
         if cmd != "satellite-beat" || !enabled {
             crate::diagnostics::event("satellite.received", &format!("cmd={cmd} enabled={enabled}"));
         }
-        if !enabled { return; }
+        if !enabled { self.mic.set_satellite_muted(false); return; }
         // A browser event must not take ownership while a user-driven
         // recording, stopping or transcription is already in progress.
         let busy = self.recorders().iter().any(|r| {
@@ -301,10 +314,12 @@ impl Hub {
             }
             _ => {}
         }
+        self.refresh_smart_mic();
     }
 
     fn satellite_tick(&self) {
         if !settings::satellite_enabled() {
+            self.mic.set_satellite_muted(false);
             self.satellite.borrow_mut().release();
             *self.satellite_owner.borrow_mut() = None;
             return;
@@ -315,6 +330,7 @@ impl Hub {
         {
             self.satellite.borrow_mut().release();
             *self.satellite_owner.borrow_mut() = None;
+            self.mic.set_satellite_muted(false);
             return;
         }
         let still_paused = owner.as_ref().is_some_and(|r| r.state.get() == State::Recording && r.paused.get());
@@ -340,13 +356,14 @@ impl Hub {
             }
             _ => {}
         }
+        self.refresh_smart_mic();
     }
 
     /// A command from the socket: `omarchy-meeting-recorder start` and friends.
     /// `title` is what came with it: the name for `start`, the notes file for
     /// `notes`, "" without one.
     fn command(self: &Rc<Self>, app: &adw::Application, command: &str, title: &str) {
-        if matches!(command, "satellite-join" | "satellite-leave" | "satellite-beat") {
+        if matches!(command, "satellite-join" | "satellite-leave" | "satellite-beat" | "satellite-mic-muted" | "satellite-mic-live" | "satellite-mic-unknown") {
             self.satellite_event(app, command, title);
             return;
         }
@@ -732,6 +749,17 @@ impl Recorder {
                 crate::diagnostics::event("satellite", if row.is_active() { "enabled" } else { "disabled" });
             });
             group.add(&satellite_row);
+            let mic_gate = adw::SwitchRow::builder()
+                .title("Smart Mic Sync (BETA)")
+                .subtitle("Mirror browser mic mute into the local mic track only; unknown state stays silent. Manual recordings are unaffected.")
+                .active(settings::smart_mic_sync())
+                .build();
+            let mic_source = mic.clone();
+            mic_gate.connect_active_notify(move |row| {
+                settings::save_smart_mic_sync(row.is_active());
+                if !row.is_active() { mic_source.set_satellite_muted(false); }
+            });
+            group.add(&mic_gate);
         }
         content.append(&group);
 
