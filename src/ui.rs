@@ -2130,7 +2130,9 @@ impl Recorder {
             (mic.is_file() && computer.is_file()) || source_track(dir).is_file()
         });
         self.again_button.set_sensitive(tracks_kept);
-        self.schedule_button.set_sensitive(tracks_kept);
+        let needs_transcript = self.result_dir.borrow().as_ref()
+            .is_some_and(|dir| !dir.join("transcript.md").is_file());
+        self.schedule_button.set_sensitive(tracks_kept && needs_transcript);
         self.schedule_button.set_visible(state == State::Done);
         self.schedule_status.set_visible(state == State::Done);
         let job = self.result_dir.borrow().as_ref().and_then(|dir| deferred::load(dir));

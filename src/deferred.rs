@@ -49,6 +49,9 @@ pub fn queue(dir: &Path, due: i64, now: i64) -> Result<(), String> {
     if due > now + 366 * 86_400 {
         return Err("Choose a date within the next year".into());
     }
+    if dir.join("transcript.md").is_file() {
+        return Err("This meeting already has a transcript; use Transcribe again instead".into());
+    }
     if !has_tracks(dir) {
         return Err("Separate audio tracks have not been saved yet".into());
     }
