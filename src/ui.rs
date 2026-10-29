@@ -1752,9 +1752,6 @@ impl Recorder {
         let weak = Rc::downgrade(self);
         self.again_button.connect_clicked(move |_| {
             let Some(r) = weak.upgrade() else { return };
-            let Some(dir) = r.result_dir.borrow().clone() else {
-                return;
-            };
             r.process_saved_now();
         });
 
@@ -2757,7 +2754,7 @@ impl Recorder {
                 let _ = std::fs::write(out.join(crate::notes::NOTES_FILE), script);
             }
             *this.manifest.borrow_mut() = Some(manifest);
-            *this.result_dir.borrow_mut() = Some(out);
+            *this.result_dir.borrow_mut() = Some(out.clone());
 
             if saved == (true, true) {
                 let _ = std::fs::remove_dir_all(&staging);
