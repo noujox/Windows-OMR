@@ -16,6 +16,7 @@ use crate::agent::{self, Agent};
 use crate::animation::TranscribeAnimation;
 use crate::audio::{HISTORY, Input, Source, to_meter};
 use crate::chapters::{self, Chapter};
+use crate::deferred;
 use crate::export::{self, Format, export_audio, export_tracks};
 use crate::ipc::{self, SharedStatus, Status};
 use crate::meeting::{self, Manifest};
@@ -90,6 +91,7 @@ struct Hub {
     windows: RefCell<Vec<Rc<Recorder>>>,
     satellite: RefCell<Satellite>,
     satellite_owner: RefCell<Option<std::rc::Weak<Recorder>>>,
+    app: adw::Application,
 }
 
 impl Hub {
@@ -101,6 +103,7 @@ impl Hub {
             windows: RefCell::default(),
             satellite: RefCell::default(),
             satellite_owner: RefCell::default(),
+            app: app.clone(),
         });
         let (commands_tx, commands_rx) = async_channel::unbounded();
         ipc::serve(
@@ -129,6 +132,18 @@ impl Hub {
             }
         });
         app.add_action(&new_window);
+
+        deferred::recover_interrupted();
+        let weak = Rc::downgrade(&hub);
+        glib::timeout_add_local(Duration::from_secs(10), move || {
+            let Some(hub) = weak.upgrade() else { return glib::ControlFlow::Break };
+            hub.start_due_jobs();
+            glib::ControlFlow::Continue
+        });
+        let weak = Rc::downgrade(&hub);
+        glib::idle_add_local_once(move || {
+            if let Some(hub) = weak.upgrade() { hub.start_due_jobs(); }
+        });
 
         // Browser heartbeat watchdog: pause after 75 seconds without news.
         let weak = Rc::downgrade(&hub);
@@ -200,6 +215,27 @@ impl Hub {
             }
         });
         recorder
+    }
+
+    /// Execute one due job at a time, without competing with live capture.
+    fn start_due_jobs(self: &Rc<Self>) {
+        if self.recorders().iter().any(|r| matches!(
+            r.state.get(), State::Recording | State::Stopping | State::Transcribing
+        )) { return; }
+        let Some(dir) = deferred::due_jobs(ipc::now()).into_iter().next() else { return };
+        if let Err(e) = deferred::mark(&dir, "running", None) {
+            crate::diagnostics::event("deferred.error", &format!("job not claimed: {e}"));
+            return;
+        }
+        let r = self.add_window(&self.app);
+        r.open_meeting(&dir);
+        if r.state.get() != State::Done {
+            let _ = deferred::mark(&dir, "failed", Some("Could not load saved meeting"));
+            return;
+        }
+        crate::diagnostics::event("deferred", "starting scheduled transcription");
+        r.process_scheduled();
+        r.window.set_visible(false);
     }
 
     /// The open windows, oldest first.
@@ -600,6 +636,9 @@ struct Recorder {
     pause_button: gtk::Button,
     import_button: gtk::Button,
     open_saved_button: gtk::Button,
+    schedule_button: gtk::Button,
+    schedule_status: gtk::Label,
+    prompt_after_stop: Cell<bool>,
     model_banner: adw::Banner,
     model_downloading: Cell<bool>,
     drop_hint: gtk::Label,
@@ -956,6 +995,13 @@ impl Recorder {
         again_language_row.add_suffix(&again_button);
         again_group.add(&again_language_row);
         left.append(&again_group);
+        let schedule_button = gtk::Button::builder()
+            .label("Schedule transcription…")
+            .css_classes(["pill"]).build();
+        left.append(&schedule_button);
+        let schedule_status = gtk::Label::builder()
+            .wrap(true).xalign(0.0).css_classes(["dim-label"]).build();
+        left.append(&schedule_status);
 
         let right = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -1210,6 +1256,9 @@ impl Recorder {
             pause_button,
             import_button,
             open_saved_button,
+            schedule_button,
+            schedule_status,
+            prompt_after_stop: Cell::new(false),
             model_banner,
             model_downloading: Cell::new(false),
             drop_hint,
@@ -1374,7 +1423,10 @@ impl Recorder {
             let Some(r) = weak.upgrade() else { return };
             match r.state.get() {
                 State::Idle | State::Done => r.start(),
-                State::Recording => r.stop(),
+                State::Recording => {
+                    r.prompt_after_stop.set(true);
+                    r.stop();
+                },
                 _ => {}
             }
         });
@@ -1693,25 +1745,17 @@ impl Recorder {
         }
 
         let weak = Rc::downgrade(self);
+        self.schedule_button.connect_clicked(move |_| {
+            if let Some(r) = weak.upgrade() { r.choose_schedule(); }
+        });
+
+        let weak = Rc::downgrade(self);
         self.again_button.connect_clicked(move |_| {
             let Some(r) = weak.upgrade() else { return };
             let Some(dir) = r.result_dir.borrow().clone() else {
                 return;
             };
-            let tracks = match r.manifest.borrow().as_ref() {
-                Some(m) if m.imported.is_some() => {
-                    Tracks::Single(source_track(&dir), m.speaker_count)
-                }
-                _ => Tracks::Kept(dir),
-            };
-            let this = r.clone();
-            glib::spawn_future_local(async move {
-                let result = this
-                    .run_transcription(tracks, this.selected_language())
-                    .await;
-                this.hold_animation(&result).await;
-                this.finished(true, result);
-            });
+            r.process_saved_now();
         });
 
         let weak = Rc::downgrade(self);
@@ -2089,6 +2133,24 @@ impl Recorder {
             (mic.is_file() && computer.is_file()) || source_track(dir).is_file()
         });
         self.again_button.set_sensitive(tracks_kept);
+        self.schedule_button.set_sensitive(tracks_kept);
+        self.schedule_button.set_visible(state == State::Done);
+        self.schedule_status.set_visible(state == State::Done);
+        let job = self.result_dir.borrow().as_ref().and_then(|dir| deferred::load(dir));
+        self.schedule_status.set_label(&match job {
+            Some(job) if job.status == "pending" => {
+                let when = glib::DateTime::from_unix_local(job.due)
+                    .and_then(|t| t.format("%d %b %Y, %H:%M"))
+                    .map(|t| t.to_string()).unwrap_or_else(|_| "scheduled".into());
+                format!("Transcription scheduled for {when} (local time)")
+            }
+            Some(job) if job.status == "failed" => format!(
+                "Scheduled transcription failed: {}. Use the refresh button to retry.",
+                job.error.unwrap_or_default()
+            ),
+            Some(_) => "Scheduled transcription in progress".into(),
+            None => String::new(),
+        });
         self.again_button.set_tooltip_text(Some(if tracks_kept {
             "Transcribe the meeting again with the selected language"
         } else {
@@ -2656,6 +2718,7 @@ impl Recorder {
         if !self.showing_meeting_notes.get() {
             *self.live_notes.borrow_mut() = self.notes.path();
         }
+        let ask = self.prompt_after_stop.replace(false);
         let this = self.clone();
         glib::spawn_future_local(async move {
             let (audio_out, audio_staging) = (out.clone(), staging.clone());
@@ -2696,19 +2759,149 @@ impl Recorder {
             *this.manifest.borrow_mut() = Some(manifest);
             *this.result_dir.borrow_mut() = Some(out);
 
-            let result = this
-                .run_transcription(Tracks::Raw(staging.clone()), language)
-                .await;
-            // The kept tracks are enough to transcribe again; the raw files can go.
             if saved == (true, true) {
                 let _ = std::fs::remove_dir_all(&staging);
+                *this.staging.borrow_mut() = None;
+                if ask && !this.quit_when_done.get() {
+                    this.saved_waiting_for_transcript();
+                    this.choose_processing();
+                    return;
+                }
             }
+            let tracks = if saved.1 { Tracks::Kept(out.clone()) } else { Tracks::Raw(staging.clone()) };
+            let result = this.run_transcription(tracks, language).await;
             this.hold_animation(&result).await;
             this.finished(saved.0, result);
         });
     }
 
     /// Transcribes into `result_dir/transcript.md`, driving the animation.
+    /// Saved audio with no transcript is still a valid, reopenable meeting.
+    fn saved_waiting_for_transcript(self: &Rc<Self>) {
+        self.animation.set_running(false);
+        self.set_state(State::Done);
+        let Some(dir) = self.result_dir.borrow().clone() else { return };
+        self.show_meeting_notes(&dir);
+        self.player.load(&dir);
+        self.show_transcript(None, Some("Audio saved. Transcription is pending."));
+        self.render();
+    }
+
+    fn process_saved_now(self: &Rc<Self>) {
+        self.process_saved(false);
+    }
+    fn process_scheduled(self: &Rc<Self>) {
+        self.process_saved(true);
+    }
+    fn process_saved(self: &Rc<Self>, scheduled: bool) {
+        if self.state.get() != State::Done { return; }
+        let Some(dir) = self.result_dir.borrow().clone() else { return };
+        if !deferred::has_tracks(&dir) { self.toast("Saved tracks missing"); return; }
+        if !scheduled { deferred::cancel(&dir); }
+        let tracks = match self.manifest.borrow().as_ref() {
+            Some(m) if m.imported.is_some() => Tracks::Single(source_track(&dir), m.speaker_count),
+            _ => Tracks::Kept(dir.clone()),
+        };
+        let language = self.selected_language();
+        let this = self.clone();
+        glib::spawn_future_local(async move {
+            let result = this.run_transcription(tracks, language).await;
+            if scheduled {
+                match &result {
+                    Ok(()) => deferred::cancel(&dir),
+                    Err(e) => { let _ = deferred::mark(&dir, "failed", Some(e)); }
+                };
+            }
+            this.hold_animation(&result).await;
+            this.finished(true, result);
+        });
+    }
+
+    fn choose_processing(self: &Rc<Self>) {
+        let dialog = adw::AlertDialog::new(
+            Some("Audio saved"),
+            Some("Your recording is safe. When would you like to transcribe it?")
+        );
+        dialog.add_response("later", "Leave for later");
+        dialog.add_response("schedule", "Schedule…");
+        dialog.add_response("now", "Process now");
+        dialog.set_response_appearance("now", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("now"));
+        dialog.set_close_response("later");
+        let this = self.clone();
+        dialog.connect_response(None, move |_, response| match response {
+            "now" => this.process_saved_now(),
+            "schedule" => this.choose_schedule(),
+            _ => this.toast("Audio saved. You can process it from this meeting later."),
+        });
+        dialog.present(Some(&self.window));
+    }
+
+    fn choose_schedule(self: &Rc<Self>) {
+        let Some(dir) = self.result_dir.borrow().clone() else {return};
+        if !deferred::has_tracks(&dir) { self.toast("Audio tracks must be saved first"); return; }
+        let dialog = adw::AlertDialog::new(
+            Some("Schedule transcription"),
+            Some("Choose a date and time in your computer's local timezone. Audio is already saved.")
+        );
+        let container = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        let calendar = gtk::Calendar::new();
+        container.append(&calendar);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        row.append(&gtk::Label::new(Some("Time (24h):")));
+        let hour = gtk::SpinButton::with_range(0.0, 23.0, 1.0);
+        let minute = gtk::SpinButton::with_range(0.0, 59.0, 1.0);
+        if let Ok(now) = glib::DateTime::now_local() {
+            hour.set_value(now.hour() as f64);
+            minute.set_value(now.minute() as f64);
+        }
+        row.append(&hour);
+        row.append(&gtk::Label::new(Some(":")));
+        row.append(&minute);
+        container.append(&row);
+        dialog.set_extra_child(Some(&container));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("save", "Schedule");
+        dialog.set_default_response(Some("save"));
+        dialog.set_close_response("cancel");
+        let this = self.clone();
+        dialog.connect_response(None, move |_, response| {
+            if response != "save" { return }
+            let date = calendar.date();
+            let due = glib::DateTime::from_local(
+                date.year(), date.month(), date.day_of_month(),
+                hour.value_as_int(), minute.value_as_int(), 0.0,
+            ).map(|dt| dt.to_unix());
+            let Ok(due) = due else {
+                this.toast("That date/time is invalid");
+                this.choose_schedule();
+                return;
+            };
+            if let Err(message) = deferred::queue(&dir, due, ipc::now()) {
+                this.toast(&message);
+                this.choose_schedule();
+                return;
+            }
+            this.render();
+            this.toast("Transcription scheduled. Your audio is saved.");
+            let dir = dir.clone();
+            let weak = Rc::downgrade(&this);
+            glib::spawn_future_local(async move {
+                let result = gio::spawn_blocking(move || deferred::register_wakeup(&dir, due)).await;
+                match result {
+                    Ok(Ok(())) => crate::diagnostics::event("deferred", "Windows wake-up task registered"),
+                    other => {
+                        crate::diagnostics::event("deferred.warning", &format!("{other:?}"));
+                        if let Some(this) = weak.upgrade() {
+                            this.toast("Windows wake-up task unavailable. Keep the app open or reopen it after the scheduled time.");
+                        }
+                    }
+                }
+            });
+        });
+        dialog.present(Some(&self.window));
+    }
+
     async fn run_transcription(
         &self,
         tracks: Tracks,

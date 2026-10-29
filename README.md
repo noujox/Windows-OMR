@@ -22,6 +22,7 @@ At its heart, it is still Meeting Recorder: **your microphone, the other side of
 | **Desktop integration** | Windows notification-area icon, minimize-to-tray support, and optional automatic startup with Windows. |
 | **Windows internals** | Native **Named Pipes** for local control, Windows audio playback, and webcam capture through FFmpeg/DirectShow. |
 | **Troubleshooting** | Persistent application logs, recovery of saved meetings, and fixes for Windows-specific GTK and IPC issues. |
+| **Deferred transcription (preview)** | Stop and save the audio first, then transcribe immediately, schedule a local date/time, or leave the transcript for later. Windows Task Scheduler can wake the app at the chosen time. |
 | **Browser automation** | An **optional** satellite extension for browser-based Google Meet, Microsoft Teams, and Zoom. |
 
 We have also removed the integrations that made little sense outside Omarchy—such as the Hyprland-specific window rules and the Omarchy bar plugin—while keeping the Rust, GTK4/libadwaita application and the existing meeting format.
@@ -90,6 +91,12 @@ The installer only registers a per-user Windows host manifest. It does **not** i
 The popup's **host connected** status means the browser can reach the native host—it **does not guarantee recording has started**. If something goes wrong, check `%LOCALAPPDATA%\omarchy-meeting-recorder\logs\app.log` and see [Satellite troubleshooting and known limitations](satellite/README.md).
 
 **BETA limitations:** Meet/Teams/Zoom may change their UI and break detection; desktop meeting applications are not supported; multi-browser setups with distinct extension IDs need extra care; and unexpected disconnects or reconnects may require manual intervention. Please obtain any necessary participant consent and follow applicable recording laws.
+
+## Schedule transcription for later (preview)
+
+After pressing **Stop recording**, Windows-OMR saves the audio tracks first and then offers **Process now**, **Schedule…**, or **Leave for later**. Scheduling opens a calendar and a 24-hour time picker; the selected date/time is interpreted in your PC's local timezone. The appointment is stored beside the meeting in a small JSON file. You can reopen the meeting, select **Schedule transcription…** to reschedule it, or use the transcription refresh control to run it immediately.
+
+On Windows, the app attempts to register a **per-user Windows Task Scheduler task** so the scheduled processing can start even if you closed the app. The task starts the recorder in the background; if the app is already running, it scans for due jobs itself. If the scheduled task cannot be registered, leave the app open or reopen it after the scheduled date to process overdue jobs. Windows must be powered on and the user session available; sleeping, signed-out, or powered-off machines cannot guarantee exact execution time. Keep the application executable at the same location after scheduling. If Whisper fails, the audio is preserved and the error can be retried manually; the job does not retry endlessly.
 
 ## Getting started on Windows
 

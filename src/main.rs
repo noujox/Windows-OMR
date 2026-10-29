@@ -12,6 +12,7 @@ mod animation;
 mod audio;
 mod chapters;
 mod diagnostics;
+mod deferred;
 mod diarize;
 mod export;
 mod find;
