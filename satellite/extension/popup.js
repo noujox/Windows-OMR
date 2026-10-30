@@ -37,6 +37,38 @@ toggle.addEventListener("change", async () => {
   await chrome.storage.local.set({enabled: toggle.checked});
   update(toggle.checked);
 });
+const diagnosticStatus = document.querySelector("#diagnostic-status");
+document.querySelector("#diagnose").addEventListener("click", async () => {
+  const button = document.querySelector("#diagnose");
+  button.disabled = true;
+  diagnosticStatus.textContent = "Comprobando el detector en la pestaña activa...";
+  try {
+    const tabs = await chrome.tabs.query({active:true, currentWindow:true});
+    const tab = tabs[0];
+    if (!tab?.id) {
+      diagnosticStatus.textContent = "No se pudo identificar la pestaña activa.";
+      return;
+    }
+    const reply = await chrome.tabs.sendMessage(tab.id, {type:"satellite-diagnostic"});
+    if (!reply?.detectorLoaded) {
+      diagnosticStatus.textContent = "El detector no respondió. Recarga la pestaña de Meet.";
+      return;
+    }
+    diagnosticStatus.textContent =
+      "Detector: cargado (" + reply.provider + "). " +
+      "URL: " + (reply.urlRecognized ? "válida" : "no reconocida") + ". " +
+      "Botón de salida: " + (reply.leaveControlFound ? "reconocido" : "no reconocido") +
+      " (" + (reply.visibleControls ?? 0) + " controles visibles). " +
+      "Reunión activa: " + (reply.active ? "sí" : "no") + ". " +
+      "Micrófono: " + (reply.mic === "muted" ? "silenciado" : reply.mic === "live" ? "activo" : "desconocido") + ".";
+  } catch (error) {
+    diagnosticStatus.textContent = "Detector no disponible en esta pestaña. " +
+      "Comprueba que sea Meet, recarga la extensión y después recarga la pestaña. " +
+      ("Detalle: " + (error?.message || "sin respuesta")).slice(0, 110);
+  } finally {
+    button.disabled = false;
+  }
+});
 document.querySelector("#retry").addEventListener("click", async () => {
   const retry = document.querySelector("#retry");
   retry.disabled = true;

@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const path = require('node:path');
 const base = path.resolve(__dirname, '../extension');
 
-function detector(route, visible = true, label = 'Salir de la llamada', retry = false, micInitially = null, micAfter = undefined) {
+function detector(route, visible = true, label = 'Salir de la llamada', retry = false, micInitially = null, micAfter = undefined, diagnostic = false) {
   const sent = [];
   let probe;
   let receive;
@@ -54,6 +54,16 @@ function detector(route, visible = true, label = 'Salir de la llamada', retry = 
     receive({type:'satellite-retry'}, {}, reply => {response=reply;});
     assert.equal(response?.active, visible && label === 'Salir de la llamada');
   }
+  if (diagnostic) {
+    const before = sent.length;
+    let reply;
+    receive({type:'satellite-diagnostic'}, {}, result => {reply=result;});
+    assert.equal(reply?.detectorLoaded,true);
+    assert.equal(reply?.provider,'meet');
+    assert.equal(reply?.urlRecognized,route !== '/meet/');
+    assert.equal(reply?.leaveControlFound,visible && label === 'Salir de la llamada' && route !== '/meet/');
+    assert.equal(sent.length,before,'diagnostics must not request recording');
+  }
   return sent;
 }
 
@@ -67,6 +77,12 @@ assert.equal(detector('/meet/wpe-ofqg-hij', true, 'Salir de la llamada', true).l
   'explicit retry on a live call sends a fresh join');
 assert.equal(detector('/meet/wpe-ofqg-hij', false, 'Salir de la llamada', true).length, 0,
   'retry must not claim a page without an active call');
+assert.equal(detector('/meet/wpe-ofqg-hij', true, 'Salir de la llamada', false, null, undefined, true).length, 1,
+  'read-only diagnostic must report live Meet without sending extra events');
+assert.equal(detector('/meet/', true, 'Salir de la llamada', false, null, undefined, true).length, 0,
+  'diagnostic must report lobby without starting a recording');
+assert.equal(detector('/meet/wpe-ofqg-hij', true, 'Salir de la reunión').length, 1,
+  'support localized Meet leave button wording');
 
 // Smart Mic Sync uses accessible labels, never captures audio or page globals.
 const meet = '/meet/wpe-ofqg-hij';

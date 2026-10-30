@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Meeting Recorder Satellite",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Detects live Meet, Teams and Zoom browser calls and asks local Meeting Recorder to start/pause.",
   "permissions": [
     "nativeMessaging",
